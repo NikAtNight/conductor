@@ -3,7 +3,7 @@ import Carbon.HIToolbox
 
 /// Posts synthetic input through CGEvent. All coordinates are global display points with a
 /// top-left origin, which is what CGEvent uses (and not what AppKit uses).
-final class InputController {
+final class InputController: @unchecked Sendable {
     private var position: CGPoint
     private var leftDown = false
     private let source = CGEventSource(stateID: .combinedSessionState)

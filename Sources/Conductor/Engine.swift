@@ -2,7 +2,10 @@ import AVFoundation
 import AppKit
 
 /// Runs the camera -> tracker -> gesture -> input pipeline. One instance for the app's life.
-final class Engine {
+///
+/// Marked `@unchecked Sendable` because the mutable pipeline state is only ever touched on
+/// `camera.queue`; main-actor code hands values over through `refreshFromMainActor`.
+final class Engine: @unchecked Sendable {
     let camera = CameraCapture()
     let state: TrackingState
     let preferences: Preferences
@@ -17,6 +20,7 @@ final class Engine {
     private var prefs: Preferences.Snapshot
     private var screen: CGRect = .zero
     private var accessibilityOK = false
+    private var zoomAccumulator: CGFloat = 0
 
     @MainActor
     init(state: TrackingState, preferences: Preferences) {
@@ -106,12 +110,38 @@ final class Engine {
         }
     }
 
+    /// Full-frame palm travel of 1.0 would scroll this many pixels. Tuned so a relaxed 10 cm hand
+    /// move scrolls about a screen's worth.
+    private static let scrollPixelsPerFrame: CGFloat = 4000
+    private static let zoomPixelsPerFrame: CGFloat = 1500
+    /// Hands must spread or close this far (normalized) to fire one cmd+= / cmd+- press.
+    private static let zoomKeyStep: CGFloat = 0.04
+
     private func perform(_ action: GestureRecognizer.Action) {
         switch action {
         case .leftDown(let count): input.leftDown(clickCount: count)
         case .leftUp(let count): input.leftUp(clickCount: count)
         case .rightClick: input.rightClick()
-        case .scroll, .zoom: break
+        case .scroll(let dy):
+            // Natural scrolling: hand up means content moves up, which is a negative wheel delta.
+            let pixels = -dy * Self.scrollPixelsPerFrame * CGFloat(prefs.scrollGain)
+            input.scroll(dy: Int32(pixels.rounded()))
+        case .zoom(let delta):
+            if prefs.zoomWithKeys {
+                zoomAccumulator += delta
+                while zoomAccumulator >= Self.zoomKeyStep {
+                    input.keyPress(KeyCodes.equals, flags: .maskCommand)
+                    zoomAccumulator -= Self.zoomKeyStep
+                }
+                while zoomAccumulator <= -Self.zoomKeyStep {
+                    input.keyPress(KeyCodes.minus, flags: .maskCommand)
+                    zoomAccumulator += Self.zoomKeyStep
+                }
+            } else {
+                // Cmd+scroll zooms in browsers, Preview, Maps and most editors. Spreading the hands
+                // is a positive delta, and scrolling up (positive wheel) zooms in.
+                input.scroll(dy: Int32((delta * Self.zoomPixelsPerFrame).rounded()), flags: .maskCommand)
+            }
         }
     }
 }
