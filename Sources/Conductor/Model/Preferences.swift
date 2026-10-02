@@ -20,6 +20,8 @@ final class Preferences: ObservableObject {
     @Published var requireReadyPose: Bool { didSet { save() } }
     @Published var dwellClick: Bool { didSet { save() } }
     @Published var dwellTime: Double { didSet { save() } }
+    @Published var showCursorRing: Bool { didSet { save() } }
+    @Published var soundCues: Bool { didSet { save() } }
     /// Nil means automatic: see CameraPlacement.resolve.
     @Published var cameraPlacement: CameraPlacement? { didSet { save() } }
 
@@ -94,6 +96,8 @@ final class Preferences: ObservableObject {
         requireReadyPose = b("requireReadyPose", true)
         dwellClick = b("dwellClick", false)
         dwellTime = d("dwellTime", 0.8)
+        showCursorRing = b("showCursorRing", true)
+        soundCues = b("soundCues", false)
         cameraPlacement = defaults.data(forKey: "cameraPlacement")
             .flatMap { try? JSONDecoder().decode(CameraPlacement.self, from: $0) }
     }
@@ -109,6 +113,8 @@ final class Preferences: ObservableObject {
         requireReadyPose = true
         dwellClick = false
         dwellTime = 0.8
+        showCursorRing = true
+        soundCues = false
     }
 
     private func save() {
@@ -127,6 +133,8 @@ final class Preferences: ObservableObject {
         defaults.set(requireReadyPose, forKey: "requireReadyPose")
         defaults.set(dwellClick, forKey: "dwellClick")
         defaults.set(dwellTime, forKey: "dwellTime")
+        defaults.set(showCursorRing, forKey: "showCursorRing")
+        defaults.set(soundCues, forKey: "soundCues")
         if let cameraPlacement, let data = try? JSONEncoder().encode(cameraPlacement) {
             defaults.set(data, forKey: "cameraPlacement")
         } else {

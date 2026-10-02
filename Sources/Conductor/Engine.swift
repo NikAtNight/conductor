@@ -175,11 +175,21 @@ final class Engine: @unchecked Sendable {
             for action in output.actions { perform(action) }
         }
         let label = output.label
+        let clicked = accessibilityOK && output.actions.contains {
+            switch $0 {
+            case .leftDown, .rightClick, .middleClick: return true
+            default: return false
+            }
+        }
 
         Task { @MainActor in
             self.state.hands = hands
             self.state.fps = fps
             self.state.gestureLabel = label
+            if self.state.mode != output.mode { self.state.mode = output.mode }
+            if self.state.feedback != output.feedback { self.state.feedback = output.feedback }
+            if clicked { self.state.clicks.send() }
+            for event in output.events { self.state.events.send(event) }
         }
     }
 

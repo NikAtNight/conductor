@@ -21,6 +21,12 @@ struct HandsSettingsView: View {
                     .disabled(!preferences.dwellClick)
                 Caption("For when pinching is hard or tiring. Hold the cursor still to click, then move away before the next click.")
             }
+            Section("Feedback") {
+                Toggle("Show a ring around the cursor", isOn: $preferences.showCursorRing)
+                Caption("The ring fills as a pinch closes, counts down a dwell click, and shows the ready pose. It flashes when a click lands.")
+                Toggle("Play sounds", isOn: $preferences.soundCues)
+                Caption("A tick on every click, and a tone when Conductor takes control, gives it back, or pauses. With VoiceOver on, these moments are also announced.")
+            }
             Section("Pausing") {
                 Caption("Bind a gesture to Pause / resume in the Gestures tab to stop all input without turning the camera off. Make the same gesture again to resume. ⌃⌥⌘H turns the camera off completely.")
             }

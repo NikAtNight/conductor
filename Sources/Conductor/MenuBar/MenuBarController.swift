@@ -12,6 +12,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var previewWindow: NSWindow?
     private var settingsWindow: SettingsWindowController?
     private var hotKey: HotKey?
+    private var cursorRing: CursorRing?
+    private var cues: Cues?
     private var cancellables: Set<AnyCancellable> = []
 
     private let toggleItem = NSMenuItem(title: "Start Tracking", action: #selector(toggleTracking), keyEquivalent: "t")
@@ -24,6 +26,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         statusItem.menu = buildMenu()
         statusItem.menu?.delegate = self
 
+        cursorRing = CursorRing(state: state, preferences: preferences)
+        cues = Cues(state: state, preferences: preferences)
         hotKey = HotKey { [weak self] in
             Task { @MainActor in self?.toggleTracking() }
         }
