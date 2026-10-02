@@ -10,7 +10,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let preferences = Preferences()
     private let engine: Engine
     private var previewWindow: NSWindow?
-    private var settingsWindow: NSWindow?
+    private var settingsWindow: SettingsWindowController?
     private var hotKey: HotKey?
     private var cancellables: Set<AnyCancellable> = []
 
@@ -87,19 +87,19 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         if !state.isRunning { Task { await engine.start() } }
     }
 
-    @objc private func showSettings() {
+    @objc func showSettings() {
         if settingsWindow == nil {
-            settingsWindow = makeWindow(title: "Conductor Settings", content: SettingsView(preferences: preferences), size: nil)
+            settingsWindow = SettingsWindowController(preferences: preferences)
         }
-        present(settingsWindow)
+        present(settingsWindow?.window)
     }
 
-    private func makeWindow<V: View>(title: String, content: V, size: NSSize?) -> NSWindow {
+    private func makeWindow<V: View>(title: String, content: V, size: NSSize) -> NSWindow {
         let window = NSWindow(contentViewController: NSHostingController(rootView: content))
         window.title = title
-        window.styleMask = [.titled, .closable, .miniaturizable] + (size == nil ? [] : [.resizable])
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.isReleasedWhenClosed = false
-        if let size { window.setContentSize(size) }
+        window.setContentSize(size)
         window.center()
         return window
     }
@@ -112,11 +112,5 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func quit() {
         engine.stop()
         NSApp.terminate(nil)
-    }
-}
-
-private extension Array where Element == NSWindow.StyleMask {
-    static func + (lhs: NSWindow.StyleMask, rhs: [NSWindow.StyleMask]) -> NSWindow.StyleMask {
-        rhs.reduce(lhs) { $0.union($1) }
     }
 }

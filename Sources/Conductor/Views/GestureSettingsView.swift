@@ -13,8 +13,7 @@ struct GestureSettingsView: View {
                 }
             }
             Section {
-                Text("Only one trigger is active at a time. Both hands beat a fist, a fist beats a pinch, and among pinches the fingertip closest to the thumb wins. Scroll and zoom on a one-handed trigger use up and down hand travel.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Caption("Only one trigger is active at a time. Both hands beat a fist, a fist beats a pinch, and among pinches the fingertip closest to the thumb wins. Scroll and zoom on a one-handed trigger use up and down hand travel.")
                 HStack {
                     Spacer()
                     Button("Reset bindings") { preferences.gestureMap = .standard }
