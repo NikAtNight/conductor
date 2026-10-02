@@ -18,7 +18,10 @@ final class Engine: @unchecked Sendable {
     private var filter = PointFilter()
     private var recognizer = GestureRecognizer()
     private var prefs: Preferences.Snapshot
+    private var displays: [CGRect] = []
     private var screen: CGRect = .zero
+    private var wasIdle = true
+    private var onPause: (() -> Void)?
     private var accessibilityOK = false
     private var zoomAccumulator: CGFloat = 0
 
@@ -63,22 +66,49 @@ final class Engine: @unchecked Sendable {
     @MainActor
     func refreshFromMainActor(promptForAccessibility: Bool = false) {
         let snapshot = preferences.snapshot
-        let screenFrame = Self.cgScreenBounds()
+        let bounds = Self.displayBounds()
         let trusted = Permissions.accessibilityGranted(prompt: promptForAccessibility)
+        onPause = { [weak self] in self?.stop() }
         camera.queue.async { [self] in
             prefs = snapshot
-            screen = screenFrame
+            displays = bounds
+            screen = Self.targetScreen(mode: snapshot.displayMode, displays: bounds, current: screen)
             accessibilityOK = trusted
+            if recognizer.map != snapshot.gestureMap {
+                // Rebinding mid-gesture could orphan a held button, so let go and start clean.
+                input.releaseAll()
+                recognizer = GestureRecognizer(config: recognizer.config, map: snapshot.gestureMap)
+            }
             filter = PointFilter(minCutoff: snapshot.smoothing, beta: 0.4)
             recognizer.config.pinchEngage = snapshot.pinchEngage
             recognizer.config.pinchRelease = snapshot.pinchRelease
         }
     }
 
-    /// Main display in CGEvent coordinates (origin top-left). AppKit's NSScreen uses bottom-left,
-    /// so convert rather than pass its frame straight through.
-    private static func cgScreenBounds() -> CGRect {
-        CGDisplayBounds(CGMainDisplayID())
+    /// Every active display in CGEvent coordinates (origin top-left of the main display). AppKit's
+    /// NSScreen uses bottom-left, so don't pass its frames straight through.
+    private static func displayBounds() -> [CGRect] {
+        var count: UInt32 = 0
+        CGGetActiveDisplayList(0, nil, &count)
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        CGGetActiveDisplayList(count, &ids, &count)
+        let bounds = ids.prefix(Int(count)).map { CGDisplayBounds($0) }
+        return bounds.isEmpty ? [CGDisplayBounds(CGMainDisplayID())] : bounds
+    }
+
+    /// Which rectangle the control box maps onto. `current` is kept in follow-cursor mode until the
+    /// hand is lost and found again, so the target doesn't hop mid-gesture.
+    static func targetScreen(mode: Preferences.DisplayMode, displays: [CGRect], current: CGRect,
+                             cursor: CGPoint? = nil) -> CGRect {
+        switch mode {
+        case .all:
+            return displays.dropFirst().reduce(displays[0]) { $0.union($1) }
+        case .main:
+            return displays.first { $0.origin == .zero } ?? displays[0]
+        case .followCursor:
+            guard let cursor else { return displays.contains(current) ? current : displays[0] }
+            return displays.first { $0.contains(cursor) } ?? displays[0]
+        }
     }
 
     /// Runs on the camera queue.
@@ -89,7 +119,13 @@ final class Engine: @unchecked Sendable {
         frameTimes.removeAll { now - $0 > 1 }
         let fps = Double(frameTimes.count)
 
+        // On reacquiring the hand, follow-cursor mode re-targets the display the cursor is on.
+        if !hands.isEmpty, wasIdle, prefs.displayMode == .followCursor, displays.count > 1 {
+            let cursor = CGEvent(source: nil)?.location
+            screen = Self.targetScreen(mode: .followCursor, displays: displays, current: screen, cursor: cursor)
+        }
         let output = recognizer.update(hands: hands, at: now)
+        wasIdle = output.mode == .idle
         let mapper = ScreenMapper(boxWidth: prefs.boxWidth, boxHeight: prefs.boxHeight,
                                   boxOffsetY: prefs.boxOffsetY, mirrored: prefs.mirrored, screen: screen)
         if let pointer = output.pointer {
@@ -101,7 +137,7 @@ final class Engine: @unchecked Sendable {
         if accessibilityOK {
             for action in output.actions { perform(action) }
         }
-        let label = output.mode.rawValue
+        let label = output.label
 
         Task { @MainActor in
             self.state.hands = hands
@@ -122,6 +158,11 @@ final class Engine: @unchecked Sendable {
         case .leftDown(let count): input.leftDown(clickCount: count)
         case .leftUp(let count): input.leftUp(clickCount: count)
         case .rightClick: input.rightClick()
+        case .middleClick: input.middleClick()
+        case .shortcut(let s): input.keyPress(CGKeyCode(s.keyCode), flags: s.flags)
+        case .pauseTracking:
+            // Pausing stops the camera, which must happen on the main actor.
+            if let onPause { Task { @MainActor in onPause() } }
         case .scroll(let dy):
             // Natural scrolling: hand up means content moves up, which is a negative wheel delta.
             let pixels = -dy * Self.scrollPixelsPerFrame * CGFloat(prefs.scrollGain)

@@ -16,6 +16,10 @@ on-device. No video leaves the machine, and there is no Python, no model downloa
 | Both hands pinched, spread or squeeze | Zoom (cmd+scroll, or cmd +/- keys) |
 | ⌃⌥⌘H | Pause or resume tracking from anywhere |
 
+Those are the defaults. Every trigger (four pinches, fist, both hands) can be rebound in Settings
+> Gestures to click/drag, right click, middle click, scroll, zoom, a keyboard shortcut you record,
+pause tracking, or nothing.
+
 The cursor follows the midpoint between your thumb and index tips. That point barely moves when
 you pinch, so clicks land where you aimed. At pinch start the cursor also freezes until your hand
 moves about a centimeter, which stops a click turning into a tiny accidental drag.
@@ -49,6 +53,17 @@ Both grants are tied to the code signature. `build-app.sh` signs ad hoc, so a re
 keeps them. If macOS re-prompts after a rebuild, remove and re-add Conductor in the Accessibility
 list.
 
+## Multiple displays
+
+Settings > Tracking > Displays has three modes:
+
+- All displays. The control box covers every monitor at once. Simple, but a wide desktop means
+  coarser horizontal aim.
+- Display under the cursor. Each time your hand comes back into view, Conductor locks onto the
+  display the cursor is on. Park the mouse on a monitor, raise your hand, and that monitor is yours
+  until the hand drops out of frame.
+- Main display only.
+
 ## Tuning
 
 Menu bar > Settings. Start with the control box: make it as small as you can while still aiming
@@ -74,7 +89,7 @@ Sources/Conductor/
   Engine.swift   Camera -> tracker -> recognizer -> input, on the camera queue
   Camera/        AVCaptureSession wrapper
   Tracking/      Vision hand pose request and the HandPose model
-  Gestures/      GestureRecognizer state machine, One Euro filter, ScreenMapper
+  Gestures/      GestureMap (trigger -> action), GestureRecognizer, One Euro filter, ScreenMapper
   Control/       CGEvent posting, Accessibility check, global hotkey
   MenuBar/       Status item and menu
   Views/         Camera preview with overlay, settings form
@@ -86,7 +101,5 @@ Sources/Conductor/
 Things that came up while scoping and were left out on purpose:
 
 - Keyboard input or an on-screen keyboard.
-- Custom gesture mapping. The gesture set is fixed in code.
-- Multi-display support. Coordinates map to the main display only.
 - Gesture-based pause (an open palm hold, say). The hotkey does that job for now.
 - Head or gaze tracking.

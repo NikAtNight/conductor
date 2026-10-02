@@ -41,6 +41,11 @@ final class InputController: @unchecked Sendable {
         post(CGEvent(mouseEventSource: source, mouseType: .rightMouseUp, mouseCursorPosition: position, mouseButton: .right))
     }
 
+    func middleClick() {
+        post(CGEvent(mouseEventSource: source, mouseType: .otherMouseDown, mouseCursorPosition: position, mouseButton: .center))
+        post(CGEvent(mouseEventSource: source, mouseType: .otherMouseUp, mouseCursorPosition: position, mouseButton: .center))
+    }
+
     /// Positive dy scrolls content up (same sign as a trackpad swipe up with natural scrolling).
     func scroll(dy: Int32, dx: Int32 = 0, flags: CGEventFlags = []) {
         guard let event = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0) else { return }

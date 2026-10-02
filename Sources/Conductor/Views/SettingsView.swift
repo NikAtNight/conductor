@@ -4,7 +4,22 @@ struct SettingsView: View {
     @ObservedObject var preferences: Preferences
 
     var body: some View {
+        TabView {
+            tracking.tabItem { Text("Tracking") }
+            GestureSettingsView(preferences: preferences).tabItem { Text("Gestures") }
+        }
+        .frame(width: 480, height: 560)
+    }
+
+    private var tracking: some View {
         Form {
+            Section("Displays") {
+                Picker("Hand controls", selection: $preferences.displayMode) {
+                    ForEach(Preferences.DisplayMode.allCases) { Text($0.title).tag($0) }
+                }
+                Text("All displays stretches the control box across every monitor. Display under the cursor re-targets whichever screen the cursor is on each time your hand comes back into view, so park the mouse on a monitor and raise your hand.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Control box") {
                 slider("Width", value: $preferences.boxWidth, in: 0.2...1.0, format: "%.0f%%", scale: 100)
                 slider("Height", value: $preferences.boxHeight, in: 0.2...1.0, format: "%.0f%%", scale: 100)
@@ -38,7 +53,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460)
         .onChange(of: preferences.pinchEngage) { _, engage in
             if preferences.pinchRelease < engage + 0.1 { preferences.pinchRelease = engage + 0.1 }
         }
