@@ -10,6 +10,9 @@ struct TrackingSettingsView: View {
                 Picker("Cursor moves", selection: $preferences.pointerMode) {
                     ForEach(Preferences.PointerMode.allCases) { Text($0.title).tag($0) }
                 }
+                SettingSlider(title: "Slow-move speed", value: $preferences.slowMoveSpeed, range: 0.1...1.0, format: "%.0f%%", scale: 100)
+                    .disabled(preferences.pointerMode != .absolute)
+                Caption("To where your hand is: slow, careful moves carry the cursor this much of the usual distance, so small targets are easier to hit. Quick moves go the full distance and bring the cursor back in line with your hand. 100% turns this off.")
                 SettingSlider(title: "Trackpad speed", value: $preferences.trackpadSpeed, range: 0.3...3.0, format: "%.1fx")
                     .disabled(preferences.pointerMode != .relative)
                 Caption("Like a trackpad: the cursor moves by how far your hand moves, faster when you move faster. To reposition, drop your hand out of view and bring it back. The control box only applies to the other mode.")

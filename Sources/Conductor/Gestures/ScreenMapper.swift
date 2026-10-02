@@ -13,12 +13,17 @@ struct ScreenMapper {
     var mirrored: Bool
     var screen: CGRect
 
-    /// Input uses Vision's bottom-left origin. Output uses CGEvent's top-left origin.
-    func map(_ point: CGPoint) -> CGPoint {
+    /// Input uses Vision's bottom-left origin. Output uses CGEvent's top-left origin. Unclamped
+    /// points outside the box land off screen, which keeps hand travel measurable past the edge.
+    func map(_ point: CGPoint, clamped: Bool = true) -> CGPoint {
         let viewX = mirrored ? 1 - point.x : point.x
         let viewY = 1 - point.y
-        let x = ((viewX - box.minX) / box.width).clamped(to: 0...1)
-        let y = ((viewY - box.minY) / box.height).clamped(to: 0...1)
+        var x = (viewX - box.minX) / box.width
+        var y = (viewY - box.minY) / box.height
+        if clamped {
+            x = x.clamped(to: 0...1)
+            y = y.clamped(to: 0...1)
+        }
         return CGPoint(x: screen.minX + x * screen.width, y: screen.minY + y * screen.height)
     }
 

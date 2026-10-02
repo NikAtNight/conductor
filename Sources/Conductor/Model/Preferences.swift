@@ -25,6 +25,8 @@ final class Preferences: ObservableObject {
     @Published var soundCues: Bool { didSet { save() } }
     @Published var pointerMode: PointerMode { didSet { save() } }
     @Published var trackpadSpeed: Double { didSet { save() } }
+    /// How far slow moves carry the cursor in the absolute mode, as a fraction. 1 turns it off.
+    @Published var slowMoveSpeed: Double { didSet { save() } }
     @Published var momentumScroll: Bool { didSet { save() } }
     /// Nil means automatic: see CameraCapture.preferredDevice.
     @Published var cameraDeviceID: String? { didSet { save() } }
@@ -95,6 +97,7 @@ final class Preferences: ObservableObject {
         var cameraPlacement: CameraPlacement?
         var pointerMode: PointerMode
         var trackpadSpeed: Double
+        var slowMoveSpeed: Double
         var momentumScroll: Bool
         var cameraDeviceID: String?
         var powerSaving: Bool
@@ -113,7 +116,8 @@ final class Preferences: ObservableObject {
                  smoothing: smoothing, pinchEngage: pinchEngage, pinchRelease: pinchRelease,
                  scrollGain: scrollGain, zoomWithKeys: zoomWithKeys, displayMode: displayMode,
                  gestureMap: gestureMap, matchScreenShape: matchScreenShape, cameraPlacement: cameraPlacement,
-                 pointerMode: pointerMode, trackpadSpeed: trackpadSpeed, momentumScroll: momentumScroll,
+                 pointerMode: pointerMode, trackpadSpeed: trackpadSpeed, slowMoveSpeed: slowMoveSpeed,
+                 momentumScroll: momentumScroll,
                  cameraDeviceID: cameraDeviceID, powerSaving: powerSaving, calibratedBox: calibratedBox,
                  pinchDeadZone: pinchDeadZone, dwellRadius: dwellRadius, appProfiles: appProfiles,
                  mainHand: mainHand, requireReadyPose: requireReadyPose, dwellClick: dwellClick, dwellTime: dwellTime)
@@ -149,6 +153,7 @@ final class Preferences: ObservableObject {
         soundCues = b("soundCues", false)
         pointerMode = PointerMode(rawValue: defaults.string(forKey: "pointerMode") ?? "") ?? .absolute
         trackpadSpeed = d("trackpadSpeed", 1.0)
+        slowMoveSpeed = d("slowMoveSpeed", 0.35)
         momentumScroll = b("momentumScroll", true)
         cameraDeviceID = defaults.string(forKey: "cameraDeviceID")
         powerSaving = b("powerSaving", true)
@@ -187,6 +192,7 @@ final class Preferences: ObservableObject {
         soundCues = false
         pointerMode = .absolute
         trackpadSpeed = 1.0
+        slowMoveSpeed = 0.35
         momentumScroll = true
         cameraDeviceID = nil
         powerSaving = true
@@ -215,6 +221,7 @@ final class Preferences: ObservableObject {
         defaults.set(soundCues, forKey: "soundCues")
         defaults.set(pointerMode.rawValue, forKey: "pointerMode")
         defaults.set(trackpadSpeed, forKey: "trackpadSpeed")
+        defaults.set(slowMoveSpeed, forKey: "slowMoveSpeed")
         defaults.set(momentumScroll, forKey: "momentumScroll")
         defaults.set(cameraDeviceID, forKey: "cameraDeviceID")
         defaults.set(powerSaving, forKey: "powerSaving")

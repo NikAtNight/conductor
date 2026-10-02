@@ -28,6 +28,7 @@ final class Engine: @unchecked Sendable {
     private var zoomAccumulator: CGFloat = 0
     private var lastPosted = CGPoint(x: -1, y: -1)
     private var relative = RelativePointer()
+    private var precision = PrecisionPointer()
     private var relativeCursor: CGPoint = .zero
     private var momentum = MomentumScroller()
     private var previousMode: GestureRecognizer.Mode = .idle
@@ -192,6 +193,7 @@ final class Engine: @unchecked Sendable {
             recognizer.config.mirrored = snapshot.mirrored
             relative.speed = CGFloat(snapshot.trackpadSpeed)
             relative.mirrored = snapshot.mirrored
+            precision.slowGain = CGFloat(snapshot.slowMoveSpeed)
             if !snapshot.momentumScroll { momentum.stop() }
         }
     }
@@ -338,7 +340,7 @@ final class Engine: @unchecked Sendable {
                 relativeCursor = DisplayLayout.snap(relativeCursor, to: displays)
                 target = relativeCursor
             } else {
-                target = DisplayLayout.snap(mapper.map(smoothed), to: displays)
+                target = DisplayLayout.snap(precision.position(for: smoothed, at: now, mapper: mapper), to: displays)
             }
             if accessibilityOK, target.distance(to: lastPosted) >= Self.minimumMovePixels {
                 input.move(to: target)
@@ -347,6 +349,7 @@ final class Engine: @unchecked Sendable {
         } else {
             filter.reset()
             relative.reset()
+            precision.reset()
         }
         if accessibilityOK {
             for action in output.actions { perform(action) }

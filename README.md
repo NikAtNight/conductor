@@ -42,6 +42,9 @@ Nothing gets stuck down.
 - Cursor ring. Shows pinch, dwell, and ready-pose progress around the cursor.
 - Sounds and VoiceOver. Optional sounds for clicks and control changes. With VoiceOver running,
   taking control, giving it back, pausing, and resuming are announced.
+- Fine control. Slow, careful moves carry the cursor 35% of the usual distance so small targets
+  are easier to hit. Quick moves go the full distance and bring the cursor back in line with your
+  hand. Settings > Tracking > Slow-move speed; 100% turns it off.
 - Trackpad mode. Settings > Tracking: the cursor moves by hand travel with acceleration instead of
   sitting where your hand is.
 - Push-to-talk. "Hold a key" holds any key while a gesture is held. Settings > Gestures has a
@@ -55,7 +58,7 @@ open Conductor.app
 ```
 
 On first launch a setup assistant walks through camera access, Accessibility, where your camera
-sits, and calibrating your reach. It's in the menu bar menu afterwards too.
+sits, and calibrating your reach and pointer speed. It's in the menu bar menu afterwards too.
 
 Show Preview starts the camera and shows the skeleton Vision found, plus a dashed green box: that
 box is the part of the frame that maps to your whole screen. Calibrate Reach replaces the
@@ -109,8 +112,8 @@ too dark or tracking keeps guessing, the preview and the menu say so.
 ## Tuning
 
 Menu bar > Settings. Start with the control box: make it as small as you can while still aiming
-comfortably, since a smaller box means less arm travel. If the cursor shivers, lower the smoothing
-cutoff. If clicks fire when you don't mean them to, lower pinch engage. If they chatter, raise
+comfortably, since a smaller box means less arm travel. If aiming still feels too fast, lower the
+slow-move speed. If the cursor shivers, lower the smoothing cutoff. If clicks fire when you don't mean them to, lower pinch engage. If they chatter, raise
 pinch release.
 
 Lighting matters more than anything else. Vision needs to see your fingers clearly against the

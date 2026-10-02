@@ -52,12 +52,18 @@ struct SetupAssistantView: View {
                         Text("Click the screen your camera sits on. Automatic is fine for a laptop camera.")
                         CameraPlacementView(preferences: preferences)
                     }
-                    step(4, "Calibrate your reach", done: preferences.calibratedBox != nil) {
+                    step(4, "Calibrate your reach and speed", done: preferences.calibratedBox != nil) {
                         Text("Sit as you normally do. Press Calibrate, then trace the edge of the area you can reach comfortably for six seconds. Optional; skip it to use the automatic box.")
                         HStack {
                             Button("Calibrate", action: calibrate)
                                 .disabled(cameraStatus != .authorized || isCalibrating)
                             Text(calibrationText).foregroundStyle(.secondary)
+                        }
+                        Text("Then point at something small and adjust the speed until it's easy to land on. Changes apply right away.")
+                        if preferences.pointerMode == .absolute {
+                            SettingSlider(title: "Slow-move speed", value: $preferences.slowMoveSpeed, range: 0.1...1.0, format: "%.0f%%", scale: 100)
+                        } else {
+                            SettingSlider(title: "Trackpad speed", value: $preferences.trackpadSpeed, range: 0.3...3.0, format: "%.1fx")
                         }
                     }
                     step(5, "The gestures", done: false) {

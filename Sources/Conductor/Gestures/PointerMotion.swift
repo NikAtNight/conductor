@@ -32,6 +32,50 @@ struct RelativePointer {
     }
 }
 
+/// The "to where your hand is" pointer, with fine control. A box small enough to reach comfortably
+/// maps each camera pixel to many screen pixels, so slow aiming moves only cover `slowGain` of the
+/// mapped distance. Quick moves cover all of it and pull the cursor back toward the hand's mapped
+/// spot, so the offset built up while aiming doesn't stick around.
+struct PrecisionPointer {
+    /// Fraction of the mapped distance a slow move covers.
+    var slowGain: CGFloat = 0.35
+    private var last: (point: CGPoint, time: TimeInterval)?
+    private var cursor: CGPoint = .zero
+
+    /// Hand speeds (frame widths per second) where the gain starts rising, and where it reaches 1.
+    static let slowSpeed: CGFloat = 0.08
+    static let fastSpeed: CGFloat = 0.6
+    /// Fraction of the cursor-to-hand offset removed per frame at full speed.
+    static let catchUp: CGFloat = 0.15
+
+    mutating func reset() { last = nil }
+
+    /// Cursor position for a new normalized hand position, Vision space. The first sample after a
+    /// reset lands exactly where the hand maps, so bringing the hand back into view re-syncs.
+    /// With `slowGain` at 1 this is plain absolute mapping.
+    mutating func position(for point: CGPoint, at time: TimeInterval, mapper: ScreenMapper) -> CGPoint {
+        defer { last = (point, time) }
+        let target = mapper.map(point)
+        guard slowGain < 1, let last, time > last.time else {
+            cursor = target
+            return target
+        }
+        // Unclamped, so a slow move past the box edge still carries the cursor to the screen edge.
+        let from = mapper.map(last.point, clamped: false)
+        let to = mapper.map(point, clamped: false)
+        let handSpeed = point.distance(to: last.point) / CGFloat(time - last.time)
+        let t = ((handSpeed - Self.slowSpeed) / (Self.fastSpeed - Self.slowSpeed)).clamped(to: 0...1)
+        let gain = slowGain + (1 - slowGain) * t
+        let pull = Self.catchUp * t
+        let screen = mapper.screen
+        let x = cursor.x + (to.x - from.x) * gain
+        let y = cursor.y + (to.y - from.y) * gain
+        cursor.x = (x + (target.x - x) * pull).clamped(to: screen.minX...screen.maxX)
+        cursor.y = (y + (target.y - y) * pull).clamped(to: screen.minY...screen.maxY)
+        return cursor
+    }
+}
+
 /// Keeps a fist scroll going after the hand lets go mid-flick, slowing to a stop like a trackpad.
 struct MomentumScroller {
     /// Fraction of speed kept per frame at 30 fps.
