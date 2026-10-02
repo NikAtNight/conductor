@@ -34,6 +34,9 @@ final class Engine: @unchecked Sendable {
     private var quality = TrackingQuality()
     private var frameCount = 0
     private var lastHandTime: CFTimeInterval = 0
+    private var calibrationEnd: CFTimeInterval?
+    private var calibrationSamples: [CGPoint] = []
+    private var onCalibrated: ((CGRect?) -> Void)?
 
     @MainActor
     init(state: TrackingState, preferences: Preferences) {
@@ -126,8 +129,64 @@ final class Engine: @unchecked Sendable {
         }
     }
 
+    /// Starts the camera if needed, then records the hand for `Calibration.duration` seconds.
+    /// No input is sent meanwhile. `completion` gets the measured box (Vision space) or nil.
+    @MainActor
+    func calibrate(completion: @escaping @MainActor (CGRect?) -> Void) async {
+        if !state.isRunning { await start() }
+        guard state.isRunning else { completion(nil); return }
+        state.calibration = .running(secondsLeft: Int(Calibration.duration))
+        let finish: (CGRect?) -> Void = { box in Task { @MainActor in completion(box) } }
+        camera.queue.async { [self] in
+            input.releaseAll()
+            momentum.stop()
+            calibrationSamples = []
+            lastHandTime = CACurrentMediaTime() // full frame rate while calibrating
+            calibrationEnd = CACurrentMediaTime() + Calibration.duration
+            onCalibrated = finish
+        }
+    }
+
+    /// One calibration frame. Returns true while calibrating, so the caller skips gesture handling.
+    private func calibrationStep(hands: [HandPose], now: CFTimeInterval, fps: Double) -> Bool {
+        guard let end = calibrationEnd else { return false }
+        if let pointer = GestureRecognizer.primaryHand(hands, prefer: recognizer.config.mainHand)?.pointer {
+            calibrationSamples.append(pointer)
+        }
+        let left = end - now
+        if left > 0 {
+            let seconds = Int(left.rounded(.up))
+            Task { @MainActor in
+                self.state.hands = hands
+                self.state.fps = fps
+                self.state.gestureLabel = "Calibrating: trace the edge of your comfortable reach, \(seconds)s"
+                self.state.calibration = .running(secondsLeft: seconds)
+            }
+            return true
+        }
+        calibrationEnd = nil
+        let result = Calibration.box(from: calibrationSamples)
+        calibrationSamples = []
+        recognizer.reset()
+        let done = onCalibrated
+        onCalibrated = nil
+        Task { @MainActor in
+            self.state.calibration = result == nil ? .failed : .finished
+            self.state.gestureLabel = result == nil ? "Calibration didn't see enough movement" : "Calibrated"
+        }
+        done?(result)
+        return true
+    }
+
     /// Recomputes the control box for the current target and camera. Camera queue only.
     private func relayoutBox() {
+        if let calibrated = prefs.calibratedBox {
+            // Stored in Vision space so it survives a change to the mirror setting.
+            box = ScreenMapper.visionRect(forViewBox: calibrated, mirrored: prefs.mirrored)
+            let published = box
+            Task { @MainActor in self.state.controlBox = published }
+            return
+        }
         box = ControlBox.layout(ControlBox.Input(
             width: prefs.boxWidth, height: prefs.boxHeight, offsetY: prefs.boxOffsetY,
             matchShape: prefs.matchScreenShape, target: screen,
@@ -177,6 +236,7 @@ final class Engine: @unchecked Sendable {
         let warning = quality.warning
         frameTimes.append(now)
         frameTimes.removeAll { now - $0 > 1 }
+        if calibrationStep(hands: hands, now: now, fps: Double(frameTimes.count)) { return }
         let fps = Double(frameTimes.count)
 
         // On reacquiring the hand, follow-cursor mode re-targets the display the cursor is on.

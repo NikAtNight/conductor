@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TrackingSettingsView: View {
     @ObservedObject var preferences: Preferences
+    let calibrate: () -> Void
 
     var body: some View {
         Form {
@@ -20,7 +21,15 @@ struct TrackingSettingsView: View {
                     .disabled(preferences.matchScreenShape)
                 SettingSlider(title: "Vertical offset", value: $preferences.boxOffsetY, range: -0.3...0.3, format: "%+.0f%%", scale: 100)
                 Toggle("Mirror camera (hand right = cursor right)", isOn: $preferences.mirrored)
-                Caption("The dashed box in the preview maps to your screens. Smaller means less arm travel but coarser aim. Matching the shape keeps up-down and left-right moves at the same speed, which matters most for stacked screens.")
+                HStack {
+                    Text(preferences.calibratedBox == nil ? "Automatic box" : "Using your calibrated reach")
+                    Spacer()
+                    if preferences.calibratedBox != nil {
+                        Button("Use automatic") { preferences.calibratedBox = nil }
+                    }
+                    Button("Calibrate…", action: calibrate)
+                }
+                Caption("Calibrating measures the area you can comfortably reach and uses it as the box, replacing the size, shape, and camera-position settings. The dashed box in the preview maps to your screens. Smaller means less arm travel but coarser aim. Matching the shape keeps up-down and left-right moves at the same speed, which matters most for stacked screens.")
             }
             Section("Feel") {
                 SettingSlider(title: "Smoothing cutoff", value: $preferences.smoothing, range: 0.1...3.0, format: "%.1f Hz")

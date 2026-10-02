@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import Combine
 
 /// User-tunable knobs, persisted in UserDefaults. The pipeline reads a snapshot each frame.
@@ -28,6 +29,8 @@ final class Preferences: ObservableObject {
     /// Nil means automatic: see CameraCapture.preferredDevice.
     @Published var cameraDeviceID: String? { didSet { save() } }
     @Published var powerSaving: Bool { didSet { save() } }
+    /// A box measured by calibration, in Vision space. Overrides the automatic layout when set.
+    @Published var calibratedBox: CGRect? { didSet { save() } }
 
     enum PointerMode: String, CaseIterable, Identifiable {
         /// The cursor sits wherever the hand is inside the control box.
@@ -76,6 +79,7 @@ final class Preferences: ObservableObject {
         var momentumScroll: Bool
         var cameraDeviceID: String?
         var powerSaving: Bool
+        var calibratedBox: CGRect?
         var mainHand: GestureRecognizer.MainHand
         var requireReadyPose: Bool
         var dwellClick: Bool
@@ -88,7 +92,7 @@ final class Preferences: ObservableObject {
                  scrollGain: scrollGain, zoomWithKeys: zoomWithKeys, displayMode: displayMode,
                  gestureMap: gestureMap, matchScreenShape: matchScreenShape, cameraPlacement: cameraPlacement,
                  pointerMode: pointerMode, trackpadSpeed: trackpadSpeed, momentumScroll: momentumScroll,
-                 cameraDeviceID: cameraDeviceID, powerSaving: powerSaving,
+                 cameraDeviceID: cameraDeviceID, powerSaving: powerSaving, calibratedBox: calibratedBox,
                  mainHand: mainHand, requireReadyPose: requireReadyPose, dwellClick: dwellClick, dwellTime: dwellTime)
     }
 
@@ -125,6 +129,11 @@ final class Preferences: ObservableObject {
         momentumScroll = b("momentumScroll", true)
         cameraDeviceID = defaults.string(forKey: "cameraDeviceID")
         powerSaving = b("powerSaving", true)
+        if let v = defaults.array(forKey: "calibratedBox") as? [Double], v.count == 4 {
+            calibratedBox = CGRect(x: v[0], y: v[1], width: v[2], height: v[3])
+        } else {
+            calibratedBox = nil
+        }
         cameraPlacement = defaults.data(forKey: "cameraPlacement")
             .flatMap { try? JSONDecoder().decode(CameraPlacement.self, from: $0) }
     }
@@ -147,6 +156,7 @@ final class Preferences: ObservableObject {
         momentumScroll = true
         cameraDeviceID = nil
         powerSaving = true
+        calibratedBox = nil
     }
 
     private func save() {
@@ -172,6 +182,11 @@ final class Preferences: ObservableObject {
         defaults.set(momentumScroll, forKey: "momentumScroll")
         defaults.set(cameraDeviceID, forKey: "cameraDeviceID")
         defaults.set(powerSaving, forKey: "powerSaving")
+        if let box = calibratedBox {
+            defaults.set([box.minX, box.minY, box.width, box.height].map(Double.init), forKey: "calibratedBox")
+        } else {
+            defaults.removeObject(forKey: "calibratedBox")
+        }
         if let cameraPlacement, let data = try? JSONEncoder().encode(cameraPlacement) {
             defaults.set(data, forKey: "cameraPlacement")
         } else {

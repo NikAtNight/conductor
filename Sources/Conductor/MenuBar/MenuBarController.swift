@@ -11,6 +11,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let engine: Engine
     private var previewWindow: NSWindow?
     private var settingsWindow: SettingsWindowController?
+    private var setupWindow: NSWindow?
     private var hotKey: HotKey?
     private var cursorRing: CursorRing?
     private var cues: Cues?
@@ -44,6 +45,41 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         state.$isRunning
             .sink { [weak self] running in self?.updateIcon(running: running) }
             .store(in: &cancellables)
+
+        if !UserDefaults.standard.bool(forKey: "setupComplete") {
+            DispatchQueue.main.async { [weak self] in self?.showSetup() }
+        }
+    }
+
+    @objc func showSetup() {
+        if setupWindow == nil {
+            let view = SetupAssistantView(
+                preferences: preferences, state: state,
+                calibrate: { [weak self] in self?.calibrate() },
+                done: { [weak self] in
+                    UserDefaults.standard.set(true, forKey: "setupComplete")
+                    self?.setupWindow?.close()
+                })
+            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+            window.title = "Conductor Setup"
+            window.styleMask = [.titled, .closable]
+            window.isReleasedWhenClosed = false
+            window.center()
+            setupWindow = window
+        }
+        present(setupWindow)
+    }
+
+    /// Opens the preview so you can see yourself, then records your reach.
+    @objc func calibrate() {
+        showPreview()
+        let preferences = self.preferences
+        let engine = self.engine
+        Task {
+            await engine.calibrate { box in
+                if let box { preferences.calibratedBox = box }
+            }
+        }
     }
 
     private func buildMenu() -> NSMenu {
@@ -61,6 +97,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
+        let calibrate = NSMenuItem(title: "Calibrate Reach…", action: #selector(calibrate), keyEquivalent: "")
+        calibrate.target = self
+        menu.addItem(calibrate)
+        let setup = NSMenuItem(title: "Setup Assistant…", action: #selector(showSetup), keyEquivalent: "")
+        setup.target = self
+        menu.addItem(setup)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Conductor", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -104,7 +146,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc func showSettings() {
         if settingsWindow == nil {
-            settingsWindow = SettingsWindowController(preferences: preferences)
+            settingsWindow = SettingsWindowController(preferences: preferences, calibrate: { [weak self] in self?.calibrate() })
         }
         present(settingsWindow?.window)
     }

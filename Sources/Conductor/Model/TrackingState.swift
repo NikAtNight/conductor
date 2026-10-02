@@ -13,6 +13,14 @@ final class TrackingState: ObservableObject {
     @Published var warning: String?
     /// True while power saving is checking for a hand only a few times a second.
     @Published var idle = false
+    @Published var calibration: CalibrationStatus = .none
+
+    enum CalibrationStatus: Equatable {
+        case none
+        case running(secondsLeft: Int)
+        case finished
+        case failed
+    }
     /// The control box the pipeline is using, in view space (see ControlBox).
     @Published var controlBox = CGRect(x: 0.2, y: 0.2, width: 0.6, height: 0.5)
     @Published var mode: GestureRecognizer.Mode = .idle
