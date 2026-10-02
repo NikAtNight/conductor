@@ -68,7 +68,7 @@ final class Preferences: ObservableObject {
         boxHeight = d("boxHeight", 0.5)
         boxOffsetY = d("boxOffsetY", 0.05)
         mirrored = b("mirrored", true)
-        smoothing = d("smoothing", 1.0)
+        smoothing = d("smoothing", 0.6)
         pinchEngage = d("pinchEngage", 0.35)
         pinchRelease = d("pinchRelease", 0.55)
         scrollGain = d("scrollGain", 1.0)
@@ -79,7 +79,7 @@ final class Preferences: ObservableObject {
 
     func resetToDefaults() {
         boxWidth = 0.6; boxHeight = 0.5; boxOffsetY = 0.05; mirrored = true
-        smoothing = 1.0; pinchEngage = 0.35; pinchRelease = 0.55; scrollGain = 1.0; zoomWithKeys = false
+        smoothing = 0.6; pinchEngage = 0.35; pinchRelease = 0.55; scrollGain = 1.0; zoomWithKeys = false
         displayMode = .all
         gestureMap = .standard
     }

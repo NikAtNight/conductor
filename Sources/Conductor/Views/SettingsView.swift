@@ -29,8 +29,8 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Feel") {
-                slider("Smoothing cutoff", value: $preferences.smoothing, in: 0.3...4.0, format: "%.1f Hz")
-                Text("Lower is steadier but laggier. 1.0 is a good start.")
+                slider("Smoothing cutoff", value: $preferences.smoothing, in: 0.1...3.0, format: "%.1f Hz")
+                Text("Lower is steadier but laggier. 0.6 is a good start; go down to 0.3 if the cursor still shivers.")
                     .font(.caption).foregroundStyle(.secondary)
                 slider("Pinch engage", value: $preferences.pinchEngage, in: 0.15...0.6, format: "%.2f")
                 slider("Pinch release", value: $preferences.pinchRelease, in: 0.3...0.9, format: "%.2f")

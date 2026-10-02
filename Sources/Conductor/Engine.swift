@@ -25,6 +25,7 @@ final class Engine: @unchecked Sendable {
     private var onPause: (() -> Void)?
     private var accessibilityOK = false
     private var zoomAccumulator: CGFloat = 0
+    private var lastPosted = CGPoint(x: -1, y: -1)
 
     @MainActor
     init(state: TrackingState, preferences: Preferences) {
@@ -96,7 +97,7 @@ final class Engine: @unchecked Sendable {
                 input.releaseAll()
                 recognizer = GestureRecognizer(config: recognizer.config, map: snapshot.gestureMap)
             }
-            filter = PointFilter(minCutoff: snapshot.smoothing, beta: 0.4)
+            filter = PointFilter(minCutoff: snapshot.smoothing, beta: Self.filterBeta)
             recognizer.config.pinchEngage = snapshot.pinchEngage
             recognizer.config.pinchRelease = snapshot.pinchRelease
         }
@@ -146,8 +147,15 @@ final class Engine: @unchecked Sendable {
         let mapper = ScreenMapper(boxWidth: prefs.boxWidth, boxHeight: prefs.boxHeight,
                                   boxOffsetY: prefs.boxOffsetY, mirrored: prefs.mirrored, screen: screen)
         if let pointer = output.pointer {
-            let target = filter.filter(mapper.map(pointer), at: now)
-            if accessibilityOK { input.move(to: target) }
+            // Filter in normalized frame space, not pixels. The speed term in One Euro is tuned for
+            // units where a fast hand moves about 1.0 per second; in pixels even tremor is hundreds
+            // per second and the filter opens all the way up, which is exactly the jitter it exists
+            // to remove.
+            let target = mapper.map(filter.filter(pointer, at: now))
+            if accessibilityOK, target.distance(to: lastPosted) >= Self.minimumMovePixels {
+                input.move(to: target)
+                lastPosted = target
+            }
         } else {
             filter.reset()
         }
@@ -162,6 +170,12 @@ final class Engine: @unchecked Sendable {
             self.state.gestureLabel = label
         }
     }
+
+    /// Speed coefficient for the One Euro filter in normalized units. At 8, a hand crossing the
+    /// frame in a second raises the cutoff by about 8 Hz; resting tremor (~0.1/s) adds under 1 Hz.
+    private static let filterBeta = 8.0
+    /// Don't post moves smaller than this. Sub-pixel updates at 30 fps read as shimmer.
+    private static let minimumMovePixels: CGFloat = 2
 
     /// Full-frame palm travel of 1.0 would scroll this many pixels. Tuned so a relaxed 10 cm hand
     /// move scrolls about a screen's worth.

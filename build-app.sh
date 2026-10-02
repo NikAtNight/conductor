@@ -57,9 +57,16 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc signing is enough for a local app. A stable signature matters because macOS ties the
-# camera and Accessibility grants to it; an unsigned binary gets re-prompted on every rebuild.
-codesign --force --sign - "$APP"
+# macOS ties the camera and Accessibility grants to the code signature, and an ad-hoc signature
+# changes on every build, which silently voids the grant. Prefer a real identity when one exists.
+IDENTITY="${CODE_SIGN_IDENTITY:-}"
+if [[ -z "$IDENTITY" ]] && security find-identity -v -p codesigning | grep -q '"Talix Dev Signing"'; then
+  IDENTITY="Talix Dev Signing"
+fi
+codesign --force --sign "${IDENTITY:--}" "$APP"
+if [[ "${IDENTITY:--}" == "-" ]]; then
+  echo "warning: ad-hoc signed; macOS will forget the Accessibility grant on the next rebuild" >&2
+fi
 codesign --verify --strict "$APP"
 
 if [[ -e "$OUTPUT_APP" ]]; then

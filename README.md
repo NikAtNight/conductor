@@ -49,9 +49,11 @@ On first start macOS asks for two things:
   to flip the switch in System Settings > Privacy & Security > Accessibility. The cursor won't
   move until then, and the preview says so.
 
-Both grants are tied to the code signature. `build-app.sh` signs ad hoc, so a rebuild usually
-keeps them. If macOS re-prompts after a rebuild, remove and re-add Conductor in the Accessibility
-list.
+Both grants are tied to the code signature. `build-app.sh` signs with a "Talix Dev Signing"
+identity if your keychain has one, or `CODE_SIGN_IDENTITY` if set, so rebuilds keep the grants.
+With no identity it falls back to ad-hoc signing, which changes every build and silently voids the
+Accessibility grant: the switch in System Settings stays on but belongs to the old build. Fix that
+with `tccutil reset Accessibility com.talix.conductor` and allow it again.
 
 ## Multiple displays
 
