@@ -33,7 +33,7 @@ struct GestureSettingsView: View {
                 }
                 Caption(editing == nil
                     ? "These bindings apply everywhere, except in apps with their own profile."
-                    : "These bindings apply while this app is in front. Everything else uses Everywhere.")
+                    : "These bindings apply while this app is in front. Everything else uses Everywhere. Pause / resume is shared by every profile, so set it under Everywhere.")
             }
             Section("Bindings") {
                 ForEach(Trigger.allCases) { trigger in

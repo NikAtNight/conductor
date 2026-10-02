@@ -79,14 +79,18 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         }
     }
 
+    /// Both checks run on the queue, in order. Checking `isRunning` before queueing raced: a stop
+    /// right after a start saw "not running yet" and did nothing, leaving the camera on.
     func start() {
-        guard configured, !session.isRunning else { return }
-        queue.async { self.session.startRunning() }
+        queue.async { [self] in
+            if configured, !session.isRunning { session.startRunning() }
+        }
     }
 
     func stop() {
-        guard session.isRunning else { return }
-        queue.async { self.session.stopRunning() }
+        queue.async { [self] in
+            if session.isRunning { session.stopRunning() }
+        }
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,

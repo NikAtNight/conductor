@@ -36,9 +36,19 @@ final class Preferences: ObservableObject {
     /// Per-app gesture maps, keyed by bundle identifier.
     @Published var appProfiles: [String: AppProfile] { didSet { save() } }
 
-    /// The bindings to use while `bundleID` is the frontmost app.
+    /// The bindings to use while `bundleID` is the frontmost app. Pause / resume is global: it
+    /// always comes from the everywhere bindings, so switching apps can never strand or silently
+    /// end a pause.
     nonisolated static func effectiveMap(base: GestureMap, profiles: [String: AppProfile], frontmost bundleID: String?) -> GestureMap {
-        bundleID.flatMap { profiles[$0]?.map } ?? base
+        guard var map = bundleID.flatMap({ profiles[$0]?.map }) else { return base }
+        for trigger in Trigger.allCases {
+            if base[trigger] == .pauseTracking {
+                map[trigger] = .pauseTracking
+            } else if map[trigger] == .pauseTracking {
+                map[trigger] = .none
+            }
+        }
+        return map
     }
 
     enum PointerMode: String, CaseIterable, Identifiable {

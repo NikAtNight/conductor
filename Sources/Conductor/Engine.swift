@@ -37,6 +37,11 @@ final class Engine: @unchecked Sendable {
     private var calibrationEnd: CFTimeInterval?
     private var calibrationSamples: [CGPoint] = []
     private var onCalibrated: ((CGRect?) -> Void)?
+    /// When the last camera frame arrived, for the stalled-camera watchdog.
+    private var lastFrameTime: CFTimeInterval = 0
+    private var watchdog: DispatchSourceTimer?
+    /// If no frame arrives for this long while running, let go of everything.
+    private static let stallAfter: CFTimeInterval = 1.0
 
     /// Bundle ID of the frontmost app, for per-app gesture profiles. Main actor.
     @MainActor var frontmostBundleID: String?
@@ -62,9 +67,15 @@ final class Engine: @unchecked Sendable {
             return
         }
         refreshFromMainActor(promptForAccessibility: true)
-        state.error = accessibilityOK ? nil
+        // Ask again here rather than read `accessibilityOK`: that's set on the camera queue and
+        // isn't updated yet, which flashed a false "not granted" for the first two seconds.
+        state.error = Permissions.accessibilityGranted(prompt: false) ? nil
             : "Accessibility not granted. Cursor won't move until you allow Conductor in System Settings."
-        camera.queue.async { [self] in recognizer.reset() }
+        camera.queue.async { [self] in
+            recognizer.reset()
+            lastFrameTime = CACurrentMediaTime()
+            startWatchdog()
+        }
         camera.start()
         state.isRunning = true
         // The grant can be flipped in System Settings while we run, and AXIsProcessTrusted picks it
@@ -78,7 +89,14 @@ final class Engine: @unchecked Sendable {
     @MainActor
     private func recheckAccessibility() {
         let trusted = Permissions.accessibilityGranted(prompt: false)
-        camera.queue.async { [self] in accessibilityOK = trusted }
+        camera.queue.async { [self] in
+            // Losing access mid-hold drops our release events; reset so held state can't go stale.
+            if accessibilityOK, !trusted {
+                input.releaseAll()
+                recognizer.reset()
+            }
+            accessibilityOK = trusted
+        }
         state.error = trusted ? nil
             : "Accessibility not granted. Cursor won't move until you allow Conductor in System Settings."
     }
@@ -88,10 +106,55 @@ final class Engine: @unchecked Sendable {
         permissionTimer?.invalidate()
         permissionTimer = nil
         camera.stop()
-        camera.queue.async { [input] in input.releaseAll() }
+        camera.queue.async { [self] in
+            watchdog?.cancel()
+            watchdog = nil
+            input.releaseAll()
+            momentum.stop()
+            cancelCalibration()
+        }
+        if case .running = state.calibration { state.calibration = .none }
         state.isRunning = false
         state.hands = []
         state.gestureLabel = "Paused"
+    }
+
+    /// Quitting: let go of every button and key before the process exits. Synchronous on purpose;
+    /// an async release would be queued behind the session teardown and never run.
+    @MainActor
+    func shutdown() {
+        camera.queue.sync {
+            watchdog?.cancel()
+            input.releaseAll()
+        }
+        camera.stop()
+    }
+
+    /// Camera queue. Catches a camera that stops delivering frames (unplugged, Continuity Camera
+    /// walking away, a session error): frame-driven release logic can't run without frames.
+    private func startWatchdog() {
+        watchdog?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: camera.queue)
+        timer.schedule(deadline: .now() + 0.5, repeating: 0.5)
+        timer.setEventHandler { [weak self] in
+            guard let self, CACurrentMediaTime() - lastFrameTime > Self.stallAfter else { return }
+            input.releaseAll()
+            momentum.stop()
+            recognizer.reset()
+            Task { @MainActor in self.state.gestureLabel = "Camera stopped sending frames" }
+        }
+        timer.resume()
+        watchdog = timer
+    }
+
+    /// Camera queue. Abandons a calibration in progress and tells the caller it failed.
+    private func cancelCalibration() {
+        guard calibrationEnd != nil else { return }
+        calibrationEnd = nil
+        calibrationSamples = []
+        let done = onCalibrated
+        onCalibrated = nil
+        done?(nil)
     }
 
     /// Snapshots main-actor-owned values for the camera queue. Called on start and whenever
@@ -203,6 +266,7 @@ final class Engine: @unchecked Sendable {
     /// hand is lost and found again, so the target doesn't hop mid-gesture.
     static func targetScreen(mode: Preferences.DisplayMode, displays: [CGRect], current: CGRect,
                              cursor: CGPoint? = nil) -> CGRect {
+        guard !displays.isEmpty else { return current }
         switch mode {
         case .all:
             return displays.dropFirst().reduce(displays[0]) { $0.union($1) }
@@ -221,6 +285,7 @@ final class Engine: @unchecked Sendable {
     /// Runs on the camera queue.
     private func process(_ buffer: CMSampleBuffer) {
         let now = CACurrentMediaTime()
+        lastFrameTime = now
         frameCount += 1
         let idle = prefs.powerSaving && lastHandTime > 0 && now - lastHandTime > Self.idleAfter
         if idle, frameCount % Self.idleStride != 0 { return }

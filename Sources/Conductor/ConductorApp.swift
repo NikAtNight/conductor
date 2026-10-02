@@ -26,6 +26,11 @@ final class ConductorDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = Self.mainMenu(settingsTarget: menuBar)
     }
 
+    /// Every quit path (⌘Q, the menu, logout) lands here; nothing may stay pressed after we exit.
+    func applicationWillTerminate(_ notification: Notification) {
+        menuBar?.shutdown()
+    }
+
     /// An accessory app never shows a menu bar, but key equivalents in the main menu still work
     /// while one of its windows is key: ⌘W to close, ⌘Q to quit, and the standard edit commands.
     private static func mainMenu(settingsTarget: MenuBarController) -> NSMenu {

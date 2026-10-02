@@ -179,7 +179,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func quit() {
-        engine.stop()
-        NSApp.terminate(nil)
+        NSApp.terminate(nil) // applicationWillTerminate releases held input
+    }
+
+    func shutdown() {
+        engine.shutdown()
     }
 }

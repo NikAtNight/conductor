@@ -20,7 +20,9 @@ final class SwipeTests: XCTestCase {
         for i in 0...steps {
             let x = x0 + (x1 - x0) * CGFloat(i) / CGFloat(steps)
             let out = r.update(hands: [PoseFixtures.twoFingers(at: CGPoint(x: x, y: 0.3))], at: Double(i) * dt)
-            XCTAssertNil(out.pointer, "cursor holds still in the two-finger pose")
+            if i >= GestureRecognizer.poseFrames - 1 {
+                XCTAssertNil(out.pointer, "cursor holds still once the two-finger pose is held")
+            }
             actions += out.actions
         }
         return actions
@@ -40,6 +42,27 @@ final class SwipeTests: XCTestCase {
     func testSlowDriftIsNotASwipe() {
         var r = GestureRecognizer()
         XCTAssertEqual(swipe(from: 0.35, to: 0.6, duration: 2.0, recognizer: &r), [])
+    }
+
+    func testAOneFrameFlickerOutOfThePoseCannotSwipeTwice() {
+        var r = GestureRecognizer()
+        var actions: [GestureRecognizer.Action] = []
+        var t = 0.0
+        func frame(_ hand: HandPose) { actions += r.update(hands: [hand], at: t).actions; t += dt }
+        for i in 0...6 { frame(PoseFixtures.twoFingers(at: CGPoint(x: 0.6 - 0.25 * CGFloat(i) / 6, y: 0.3))) }
+        frame(PoseFixtures.openHand(at: CGPoint(x: 0.35, y: 0.3)))       // one bad frame
+        for i in 0...6 { frame(PoseFixtures.twoFingers(at: CGPoint(x: 0.35 + 0.25 * CGFloat(i) / 6, y: 0.3))) }
+        XCTAssertEqual(actions, [.shortcut(back)], "still the same pose, so still one swipe")
+    }
+
+    func testABriefPassThroughThePoseDoesNotSwipe() {
+        var r = GestureRecognizer()
+        var actions: [GestureRecognizer.Action] = []
+        for i in 0..<2 {
+            actions += r.update(hands: [PoseFixtures.twoFingers(at: CGPoint(x: 0.6 - 0.15 * CGFloat(i), y: 0.3))], at: Double(i) * dt).actions
+        }
+        actions += r.update(hands: [PoseFixtures.openHand(at: CGPoint(x: 0.3, y: 0.3))], at: 2 * dt).actions
+        XCTAssertEqual(actions, [])
     }
 
     func testUnboundSwipesLeaveThePoseAlone() {

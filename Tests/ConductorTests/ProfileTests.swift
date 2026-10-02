@@ -58,6 +58,48 @@ final class ProfileSelectionTests: XCTestCase {
         XCTAssertEqual(Preferences.effectiveMap(base: .standard, profiles: profiles, frontmost: nil), .standard)
     }
 
+    func testPauseComesFromEverywhereInEveryProfile() {
+        var base = GestureMap.standard
+        base[.littlePinch] = .pauseTracking
+        var profileMap = GestureMap.standard
+        profileMap[.ringPinch] = .pauseTracking // a stale pause binding in the profile
+        let profiles = ["app": AppProfile(bundleID: "app", name: "App", map: profileMap)]
+        let effective = Preferences.effectiveMap(base: base, profiles: profiles, frontmost: "app")
+        XCTAssertEqual(effective[.littlePinch], .pauseTracking)
+        XCTAssertEqual(effective[.ringPinch], GestureAction.none)
+    }
+
+    func testSwitchingProfilesWhilePausedStaysPaused() {
+        var base = GestureMap.standard
+        base[.littlePinch] = .pauseTracking
+        var r = GestureRecognizer(map: base)
+        _ = r.update(hands: [PoseFixtures.pinched(.littleTip)], at: 0)
+        let other = Preferences.effectiveMap(base: base, profiles: ["app": AppProfile(bundleID: "app", name: "App", map: .standard)], frontmost: "app")
+        _ = r.replaceMap(other)
+        // Pause pinch still held across the switch: must not resume.
+        XCTAssertTrue(r.update(hands: [PoseFixtures.pinched(.littleTip)], at: 0.1).events.isEmpty)
+        XCTAssertTrue(r.isPaused)
+    }
+
+    func testTurningOnTheReadyPoseMidHoldKeepsControl() {
+        var r = GestureRecognizer()
+        XCTAssertEqual(r.update(hands: [PoseFixtures.pinched()], at: 0).actions, [.leftDown(clickCount: 1)])
+        r.config.requireReadyPose = true
+        let out = r.update(hands: [PoseFixtures.pinched()], at: 0.05)
+        XCTAssertEqual(out.mode, .drag, "already in control; the toggle doesn't kick you out")
+        XCTAssertEqual(r.update(hands: [PoseFixtures.openHand()], at: 0.1).actions, [.leftUp(clickCount: 1)])
+    }
+
+    func testAKeyActionWithNothingRecordedDoesNothing() {
+        var map = GestureMap.standard
+        map[.ringPinch] = .holdKey(GestureAction.unsetKey)
+        map[.middlePinch] = .shortcut(GestureAction.unsetKey)
+        var r = GestureRecognizer(map: map)
+        XCTAssertEqual(r.update(hands: [PoseFixtures.pinched(.ringTip)], at: 0).actions, [])
+        XCTAssertEqual(r.update(hands: [PoseFixtures.openHand()], at: 0.1).actions, [])
+        XCTAssertEqual(r.update(hands: [PoseFixtures.pinched(.middleTip)], at: 0.2).actions, [])
+    }
+
     func testSwitchingMapsReleasesAHeldButtonButKeepsControl() {
         var config = GestureRecognizer.Config()
         config.requireReadyPose = true

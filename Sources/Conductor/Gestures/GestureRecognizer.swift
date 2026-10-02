@@ -142,6 +142,11 @@ struct GestureRecognizer {
     private var swipeTrail: [(time: TimeInterval, x: CGFloat)] = []
     /// One swipe per pose: set after a swipe fires, cleared when the pose ends.
     private var swipeFired = false
+    private var inSwipeMode = false
+    private var posedFrames = 0
+    private var unposedFrames = 0
+    /// Consecutive frames needed to enter or leave swipe mode.
+    static let poseFrames = 3
 
     init(config: Config = Config(), map: GestureMap = .standard) {
         self.config = config
@@ -154,7 +159,8 @@ struct GestureRecognizer {
     mutating func replaceMap(_ newMap: GestureMap) -> [Action] {
         guard newMap != map else { return [] }
         let released = deactivate(at: -1, asClick: false)
-        pauseHeld = nil
+        // A pause pinch still held across the swap keeps blocking resume, as long as it still pauses.
+        if let held = pauseHeld, newMap[held] != .pauseTracking { pauseHeld = nil }
         resetSwipe()
         map = newMap
         return released
@@ -198,10 +204,12 @@ struct GestureRecognizer {
     // MARK: Control states
 
     private mutating func waitingUpdate(primary: HandPose, at time: TimeInterval) -> Output {
+        // Nothing may stay held while waiting for the ready pose.
+        let released = deactivate(at: -1, asClick: false)
         let progress = readyProgress(primary, at: time)
         guard progress >= 1 else {
             mode = .waiting
-            return output(.waiting, pointer: nil, actions: [], label: Mode.waiting.rawValue,
+            return output(.waiting, pointer: nil, actions: released, label: Mode.waiting.rawValue,
                           feedback: Feedback(ready: progress))
         }
         hasControl = true
@@ -210,7 +218,7 @@ struct GestureRecognizer {
         // Don't let the hold that just took control count toward a dwell click.
         dwellRearm = true
         mode = .point
-        return output(.point, pointer: primary.pointer, actions: [], label: Mode.point.rawValue,
+        return output(.point, pointer: primary.pointer, actions: released, label: Mode.point.rawValue,
                       feedback: Feedback(ready: 1))
     }
 
@@ -259,8 +267,18 @@ struct GestureRecognizer {
     }
 
     private mutating func controlUpdate(primary: HandPose, other: HandPose?, at time: TimeInterval) -> Output {
-        if active == nil, Trigger.swipes.contains(where: { map[$0] != .none }), primary.isTwoFingerPose {
-            return swipeUpdate(primary: primary, at: time)
+        // Already in control, so turning the ready pose on later doesn't kick you out.
+        if !config.requireReadyPose { hasControl = true }
+
+        // Swipe mode needs the pose for a few frames to start and its absence for a few to end, so a
+        // loose hand passing through the pose doesn't swipe and a one-frame flicker can't fire twice.
+        let pose = primary.isTwoFingerPose
+        if pose { posedFrames += 1; unposedFrames = 0 } else { unposedFrames += 1; posedFrames = 0 }
+        let swipeBound = Trigger.swipes.contains { map[$0] != .none }
+        inSwipeMode = swipeBound && active == nil
+            && (inSwipeMode ? unposedFrames < Self.poseFrames : posedFrames >= Self.poseFrames)
+        if inSwipeMode {
+            return swipeUpdate(primary: primary, posed: pose, at: time)
         }
         resetSwipe()
         var actions: [Action] = []
@@ -310,11 +328,11 @@ struct GestureRecognizer {
     // MARK: Swipes
 
     /// Two-finger pose: the cursor holds still, and a quick sideways flick fires a swipe trigger.
-    private mutating func swipeUpdate(primary: HandPose, at time: TimeInterval) -> Output {
+    private mutating func swipeUpdate(primary: HandPose, posed: Bool, at time: TimeInterval) -> Output {
         dwellAnchor = nil
         dwellRearm = true
         mode = .swipe
-        guard let trigger = detectSwipe(primary, at: time) else {
+        guard posed, let trigger = detectSwipe(primary, at: time) else {
             return output(.swipe, pointer: nil, actions: [], label: Mode.swipe.rawValue)
         }
         return output(.swipe, pointer: nil, actions: tapActions(for: trigger), label: trigger.title)
@@ -344,8 +362,8 @@ struct GestureRecognizer {
         case .leftButton: return [.leftDown(clickCount: 1), .leftUp(clickCount: 1)]
         case .rightClick: return [.rightClick]
         case .middleClick: return [.middleClick]
-        case .shortcut(let s): return [.shortcut(s)]
-        case .holdKey(let s): return [.keyDown(s), .keyUp(s)]
+        case .shortcut(let s): return s == GestureAction.unsetKey ? [] : [.shortcut(s)]
+        case .holdKey(let s): return s == GestureAction.unsetKey ? [] : [.keyDown(s), .keyUp(s)]
         case .pauseTracking:
             isPaused = true
             events.append(.paused)
@@ -455,8 +473,8 @@ struct GestureRecognizer {
             return [.leftDown(clickCount: count)]
         case .rightClick: return [.rightClick]
         case .middleClick: return [.middleClick]
-        case .shortcut(let s): return [.shortcut(s)]
-        case .holdKey(let s): return [.keyDown(s)]
+        case .shortcut(let s): return s == GestureAction.unsetKey ? [] : [.shortcut(s)]
+        case .holdKey(let s): return s == GestureAction.unsetKey ? [] : [.keyDown(s)]
         case .pauseTracking:
             isPaused = true
             pauseHeld = trigger
@@ -480,7 +498,7 @@ struct GestureRecognizer {
             lastLeftUpTime = asClick ? time : -1
             return [.leftUp(clickCount: lastClickCount)]
         case .holdKey(let s):
-            return [.keyUp(s)]
+            return s == GestureAction.unsetKey ? [] : [.keyUp(s)]
         default:
             return []
         }
