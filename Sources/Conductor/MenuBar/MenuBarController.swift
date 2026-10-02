@@ -6,6 +6,7 @@ import SwiftUI
 final class MenuBarController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let state = TrackingState()
+    private let preferences = Preferences()
     private let engine: Engine
     private var previewWindow: NSWindow?
 
@@ -13,7 +14,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        engine = Engine(state: state)
+        engine = Engine(state: state, preferences: preferences)
         super.init()
         statusItem.button?.image = NSImage(systemSymbolName: "hand.raised", accessibilityDescription: "Conductor")
         statusItem.menu = buildMenu()

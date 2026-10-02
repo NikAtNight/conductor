@@ -5,13 +5,23 @@ import AppKit
 final class Engine {
     let camera = CameraCapture()
     let state: TrackingState
+    let preferences: Preferences
 
     private let tracker = HandTracker()
+    private let input = InputController()
     private var frameTimes: [CFTimeInterval] = []
 
+    // Pipeline state, touched only on the camera queue.
+    private var filter = PointFilter()
+    private var prefs: Preferences.Snapshot
+    private var screen: CGRect = .zero
+    private var accessibilityOK = false
+
     @MainActor
-    init(state: TrackingState) {
+    init(state: TrackingState, preferences: Preferences) {
         self.state = state
+        self.preferences = preferences
+        prefs = preferences.snapshot
         camera.onFrame = { [weak self] buffer in self?.process(buffer) }
     }
 
@@ -27,7 +37,9 @@ final class Engine {
             state.error = "Camera setup failed: \(error)"
             return
         }
-        state.error = nil
+        refreshFromMainActor()
+        state.error = accessibilityOK ? nil
+            : "Accessibility not granted. Cursor won't move until you allow Conductor in System Settings."
         camera.start()
         state.isRunning = true
     }
@@ -35,24 +47,63 @@ final class Engine {
     @MainActor
     func stop() {
         camera.stop()
+        camera.queue.async { [input] in input.releaseAll() }
         state.isRunning = false
         state.hands = []
         state.gestureLabel = "Paused"
     }
 
+    /// Snapshots main-actor-owned values for the camera queue. Called on start and whenever
+    /// preferences change.
+    @MainActor
+    func refreshFromMainActor() {
+        let snapshot = preferences.snapshot
+        let screenFrame = Self.cgScreenBounds()
+        let trusted = Permissions.accessibilityGranted(prompt: !accessibilityOK)
+        camera.queue.async { [self] in
+            prefs = snapshot
+            screen = screenFrame
+            accessibilityOK = trusted
+            filter = PointFilter(minCutoff: snapshot.smoothing, beta: 0.4)
+        }
+    }
+
+    /// Main display in CGEvent coordinates (origin top-left). AppKit's NSScreen uses bottom-left,
+    /// so convert rather than pass its frame straight through.
+    private static func cgScreenBounds() -> CGRect {
+        CGDisplayBounds(CGMainDisplayID())
+    }
+
     /// Runs on the camera queue.
     private func process(_ buffer: CMSampleBuffer) {
-        let hands = tracker.detect(in: buffer)
         let now = CACurrentMediaTime()
+        let hands = tracker.detect(in: buffer)
         frameTimes.append(now)
         frameTimes.removeAll { now - $0 > 1 }
         let fps = Double(frameTimes.count)
-        let label = hands.isEmpty ? "No hand" : "\(hands.count) hand\(hands.count == 1 ? "" : "s")"
+
+        var label = "No hand"
+        if let hand = primaryHand(hands), let pointer = hand.pointer {
+            let mapper = ScreenMapper(boxWidth: prefs.boxWidth, boxHeight: prefs.boxHeight,
+                                      boxOffsetY: prefs.boxOffsetY, mirrored: prefs.mirrored, screen: screen)
+            let target = filter.filter(mapper.map(pointer), at: now)
+            if accessibilityOK { input.move(to: target) }
+            label = "Move"
+        } else {
+            filter.reset()
+            input.releaseAll()
+        }
 
         Task { @MainActor in
             self.state.hands = hands
             self.state.fps = fps
             self.state.gestureLabel = label
         }
+    }
+
+    /// The hand that drives the cursor. With two hands visible, prefer the right one; fall back
+    /// to whichever Vision listed first.
+    private func primaryHand(_ hands: [HandPose]) -> HandPose? {
+        hands.first { $0.chirality == .right } ?? hands.first
     }
 }
