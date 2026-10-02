@@ -13,6 +13,7 @@ final class Engine {
 
     // Pipeline state, touched only on the camera queue.
     private var filter = PointFilter()
+    private var recognizer = GestureRecognizer()
     private var prefs: Preferences.Snapshot
     private var screen: CGRect = .zero
     private var accessibilityOK = false
@@ -65,6 +66,8 @@ final class Engine {
             screen = screenFrame
             accessibilityOK = trusted
             filter = PointFilter(minCutoff: snapshot.smoothing, beta: 0.4)
+            recognizer.config.pinchEngage = snapshot.pinchEngage
+            recognizer.config.pinchRelease = snapshot.pinchRelease
         }
     }
 
@@ -82,17 +85,19 @@ final class Engine {
         frameTimes.removeAll { now - $0 > 1 }
         let fps = Double(frameTimes.count)
 
-        var label = "No hand"
-        if let hand = primaryHand(hands), let pointer = hand.pointer {
-            let mapper = ScreenMapper(boxWidth: prefs.boxWidth, boxHeight: prefs.boxHeight,
-                                      boxOffsetY: prefs.boxOffsetY, mirrored: prefs.mirrored, screen: screen)
+        let output = recognizer.update(hands: hands, at: now)
+        let mapper = ScreenMapper(boxWidth: prefs.boxWidth, boxHeight: prefs.boxHeight,
+                                  boxOffsetY: prefs.boxOffsetY, mirrored: prefs.mirrored, screen: screen)
+        if let pointer = output.pointer {
             let target = filter.filter(mapper.map(pointer), at: now)
             if accessibilityOK { input.move(to: target) }
-            label = "Move"
         } else {
             filter.reset()
-            input.releaseAll()
         }
+        if accessibilityOK {
+            for action in output.actions { perform(action) }
+        }
+        let label = output.mode.rawValue
 
         Task { @MainActor in
             self.state.hands = hands
@@ -101,9 +106,12 @@ final class Engine {
         }
     }
 
-    /// The hand that drives the cursor. With two hands visible, prefer the right one; fall back
-    /// to whichever Vision listed first.
-    private func primaryHand(_ hands: [HandPose]) -> HandPose? {
-        hands.first { $0.chirality == .right } ?? hands.first
+    private func perform(_ action: GestureRecognizer.Action) {
+        switch action {
+        case .leftDown(let count): input.leftDown(clickCount: count)
+        case .leftUp(let count): input.leftUp(clickCount: count)
+        case .rightClick: input.rightClick()
+        case .scroll, .zoom: break
+        }
     }
 }
