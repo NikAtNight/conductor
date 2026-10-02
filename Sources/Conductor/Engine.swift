@@ -42,7 +42,7 @@ final class Engine: @unchecked Sendable {
             state.error = "Camera setup failed: \(error)"
             return
         }
-        refreshFromMainActor()
+        refreshFromMainActor(promptForAccessibility: true)
         state.error = accessibilityOK ? nil
             : "Accessibility not granted. Cursor won't move until you allow Conductor in System Settings."
         camera.start()
@@ -61,10 +61,10 @@ final class Engine: @unchecked Sendable {
     /// Snapshots main-actor-owned values for the camera queue. Called on start and whenever
     /// preferences change.
     @MainActor
-    func refreshFromMainActor() {
+    func refreshFromMainActor(promptForAccessibility: Bool = false) {
         let snapshot = preferences.snapshot
         let screenFrame = Self.cgScreenBounds()
-        let trusted = Permissions.accessibilityGranted(prompt: !accessibilityOK)
+        let trusted = Permissions.accessibilityGranted(prompt: promptForAccessibility)
         camera.queue.async { [self] in
             prefs = snapshot
             screen = screenFrame
