@@ -13,7 +13,10 @@ ARCH="$(uname -m)"
 swift build -c release --arch "$ARCH"
 BIN_DIR="$(swift build -c release --arch "$ARCH" --show-bin-path)"
 
-OUTPUT_APP="${APP_OUTPUT:-Conductor.app}"
+OUTPUT_APP="${APP_OUTPUT:-/Applications/Conductor.app}"
+# The last build is kept in the repo, not next to the output, so /Applications and Spotlight
+# show one Conductor.
+PREVIOUS_APP="Conductor.app.previous"
 STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/conductor-build.XXXXXX")"
 APP="$STAGING_DIR/Conductor.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -70,8 +73,8 @@ fi
 codesign --verify --strict "$APP"
 
 if [[ -e "$OUTPUT_APP" ]]; then
-  rm -rf "${OUTPUT_APP}.previous"
-  mv "$OUTPUT_APP" "${OUTPUT_APP}.previous"
+  rm -rf "$PREVIOUS_APP"
+  mv "$OUTPUT_APP" "$PREVIOUS_APP"
 fi
 mv "$APP" "$OUTPUT_APP"
 rmdir "$STAGING_DIR"

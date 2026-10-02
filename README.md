@@ -54,8 +54,11 @@ Nothing gets stuck down.
 
 ```sh
 ./build-app.sh
-open Conductor.app
+open /Applications/Conductor.app
 ```
+
+The script installs to /Applications and keeps the previous build in the repo as
+`Conductor.app.previous`. Set `APP_OUTPUT` to build somewhere else.
 
 On first launch a setup assistant walks through camera access, Accessibility, where your camera
 sits, and calibrating your reach and pointer speed. It's in the menu bar menu afterwards too.
