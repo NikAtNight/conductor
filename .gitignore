@@ -1,0 +1,8 @@
+.DS_Store
+.build/
+.swiftpm/
+Package.resolved
+Conductor.app/
+Conductor.app.previous/
+*.xcuserdatad
+AppIcon.icns
