@@ -6,10 +6,9 @@ import AppKit
 struct CameraPlacementView: View {
     @ObservedObject var preferences: Preferences
     @State private var displays: [DisplayInfo] = DisplayLayout.current()
-    private let builtInCamera = CameraCapture.preferredDeviceIsBuiltIn
-
     private var resolved: (x: CGFloat, display: DisplayInfo)? {
-        CameraPlacement.resolve(preferences.cameraPlacement, displays: displays, builtInCamera: builtInCamera)
+        CameraPlacement.resolve(preferences.cameraPlacement, displays: displays,
+                                builtInCamera: CameraCapture.isBuiltIn(id: preferences.cameraDeviceID))
     }
 
     var body: some View {

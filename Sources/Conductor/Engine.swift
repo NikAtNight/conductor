@@ -31,6 +31,9 @@ final class Engine: @unchecked Sendable {
     private var relativeCursor: CGPoint = .zero
     private var momentum = MomentumScroller()
     private var previousMode: GestureRecognizer.Mode = .idle
+    private var quality = TrackingQuality()
+    private var frameCount = 0
+    private var lastHandTime: CFTimeInterval = 0
 
     @MainActor
     init(state: TrackingState, preferences: Preferences) {
@@ -47,7 +50,7 @@ final class Engine: @unchecked Sendable {
             return
         }
         do {
-            try camera.configure()
+            try camera.configure(deviceID: preferences.cameraDeviceID)
         } catch {
             state.error = "Camera setup failed: \(error)"
             return
@@ -93,7 +96,9 @@ final class Engine: @unchecked Sendable {
         let layout = DisplayLayout.current()
         let bounds = layout.map(\.bounds)
         let resolved = CameraPlacement.resolve(snapshot.cameraPlacement, displays: layout,
-                                               builtInCamera: CameraCapture.preferredDeviceIsBuiltIn)
+                                               builtInCamera: CameraCapture.isBuiltIn(id: snapshot.cameraDeviceID))
+        // No-op unless the camera is running and the choice actually changed (checked on its queue).
+        camera.switchDevice(to: snapshot.cameraDeviceID)
         let trusted = Permissions.accessibilityGranted(prompt: promptForAccessibility)
         camera.queue.async { [self] in
             prefs = snapshot
@@ -146,10 +151,30 @@ final class Engine: @unchecked Sendable {
         }
     }
 
+    /// Power saving: after this long with no hand, analyze only every `idleStride`th frame.
+    private static let idleAfter: CFTimeInterval = 60
+    private static let idleStride = 6
+
     /// Runs on the camera queue.
     private func process(_ buffer: CMSampleBuffer) {
         let now = CACurrentMediaTime()
+        frameCount += 1
+        let idle = prefs.powerSaving && lastHandTime > 0 && now - lastHandTime > Self.idleAfter
+        if idle, frameCount % Self.idleStride != 0 { return }
+
+        if frameCount % 15 == 0, let pixels = CMSampleBufferGetImageBuffer(buffer),
+           let luma = TrackingQuality.meanLuma(of: pixels) {
+            quality.addBrightness(luma)
+        }
         let hands = tracker.detect(in: buffer)
+        if lastHandTime == 0 || !hands.isEmpty { lastHandTime = now }
+        if let primary = GestureRecognizer.primaryHand(hands, prefer: recognizer.config.mainHand) {
+            let values = primary.confidence.values
+            if !values.isEmpty { quality.addConfidence(Double(values.reduce(0, +)) / Double(values.count)) }
+        } else {
+            quality.handLost()
+        }
+        let warning = quality.warning
         frameTimes.append(now)
         frameTimes.removeAll { now - $0 > 1 }
         let fps = Double(frameTimes.count)
@@ -210,7 +235,9 @@ final class Engine: @unchecked Sendable {
         Task { @MainActor in
             self.state.hands = hands
             self.state.fps = fps
-            self.state.gestureLabel = label
+            self.state.gestureLabel = idle ? "Idle: checking for your hand a few times a second" : label
+            if self.state.warning != warning { self.state.warning = warning }
+            if self.state.idle != idle { self.state.idle = idle }
             if self.state.mode != output.mode { self.state.mode = output.mode }
             if self.state.feedback != output.feedback { self.state.feedback = output.feedback }
             if clicked { self.state.clicks.send() }

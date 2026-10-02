@@ -17,6 +17,8 @@ struct PreviewView: View {
                 Text(String(format: "%.0f fps", state.fps)).foregroundStyle(.secondary)
                 if let error = state.error {
                     Text(error).foregroundStyle(.red)
+                } else if let warning = state.warning {
+                    Text(warning).foregroundStyle(.orange)
                 }
             }
             .font(.system(.body, design: .monospaced))

@@ -25,6 +25,9 @@ final class Preferences: ObservableObject {
     @Published var pointerMode: PointerMode { didSet { save() } }
     @Published var trackpadSpeed: Double { didSet { save() } }
     @Published var momentumScroll: Bool { didSet { save() } }
+    /// Nil means automatic: see CameraCapture.preferredDevice.
+    @Published var cameraDeviceID: String? { didSet { save() } }
+    @Published var powerSaving: Bool { didSet { save() } }
 
     enum PointerMode: String, CaseIterable, Identifiable {
         /// The cursor sits wherever the hand is inside the control box.
@@ -71,6 +74,8 @@ final class Preferences: ObservableObject {
         var pointerMode: PointerMode
         var trackpadSpeed: Double
         var momentumScroll: Bool
+        var cameraDeviceID: String?
+        var powerSaving: Bool
         var mainHand: GestureRecognizer.MainHand
         var requireReadyPose: Bool
         var dwellClick: Bool
@@ -83,6 +88,7 @@ final class Preferences: ObservableObject {
                  scrollGain: scrollGain, zoomWithKeys: zoomWithKeys, displayMode: displayMode,
                  gestureMap: gestureMap, matchScreenShape: matchScreenShape, cameraPlacement: cameraPlacement,
                  pointerMode: pointerMode, trackpadSpeed: trackpadSpeed, momentumScroll: momentumScroll,
+                 cameraDeviceID: cameraDeviceID, powerSaving: powerSaving,
                  mainHand: mainHand, requireReadyPose: requireReadyPose, dwellClick: dwellClick, dwellTime: dwellTime)
     }
 
@@ -117,6 +123,8 @@ final class Preferences: ObservableObject {
         pointerMode = PointerMode(rawValue: defaults.string(forKey: "pointerMode") ?? "") ?? .absolute
         trackpadSpeed = d("trackpadSpeed", 1.0)
         momentumScroll = b("momentumScroll", true)
+        cameraDeviceID = defaults.string(forKey: "cameraDeviceID")
+        powerSaving = b("powerSaving", true)
         cameraPlacement = defaults.data(forKey: "cameraPlacement")
             .flatMap { try? JSONDecoder().decode(CameraPlacement.self, from: $0) }
     }
@@ -137,6 +145,8 @@ final class Preferences: ObservableObject {
         pointerMode = .absolute
         trackpadSpeed = 1.0
         momentumScroll = true
+        cameraDeviceID = nil
+        powerSaving = true
     }
 
     private func save() {
@@ -160,6 +170,8 @@ final class Preferences: ObservableObject {
         defaults.set(pointerMode.rawValue, forKey: "pointerMode")
         defaults.set(trackpadSpeed, forKey: "trackpadSpeed")
         defaults.set(momentumScroll, forKey: "momentumScroll")
+        defaults.set(cameraDeviceID, forKey: "cameraDeviceID")
+        defaults.set(powerSaving, forKey: "powerSaving")
         if let cameraPlacement, let data = try? JSONEncoder().encode(cameraPlacement) {
             defaults.set(data, forKey: "cameraPlacement")
         } else {

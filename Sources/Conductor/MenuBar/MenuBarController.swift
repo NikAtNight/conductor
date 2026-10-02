@@ -17,6 +17,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var cancellables: Set<AnyCancellable> = []
 
     private let toggleItem = NSMenuItem(title: "Start Tracking", action: #selector(toggleTracking), keyEquivalent: "t")
+    private let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -47,6 +48,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
+        statusLine.isEnabled = false
+        menu.addItem(statusLine)
+        menu.addItem(.separator())
         toggleItem.target = self
         menu.addItem(toggleItem)
         menu.addItem(withTitle: "Hotkey: ⌃⌥⌘H", action: nil, keyEquivalent: "").isEnabled = false
@@ -66,6 +70,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         toggleItem.title = state.isRunning ? "Pause Tracking" : "Start Tracking"
+        if !state.isRunning {
+            statusLine.title = "Tracking is off"
+        } else if let problem = state.error ?? state.warning {
+            statusLine.title = problem
+        } else {
+            statusLine.title = state.gestureLabel
+        }
     }
 
     private func updateIcon(running: Bool) {
