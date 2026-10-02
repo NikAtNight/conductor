@@ -8,7 +8,7 @@ struct SettingsView: View {
             tracking.tabItem { Text("Tracking") }
             GestureSettingsView(preferences: preferences).tabItem { Text("Gestures") }
         }
-        .frame(width: 480, height: 560)
+        .frame(width: 500, height: 640)
     }
 
     private var tracking: some View {
@@ -20,12 +20,19 @@ struct SettingsView: View {
                 Text("All displays stretches the control box across every monitor. Display under the cursor re-targets whichever screen the cursor is on each time your hand comes back into view, so park the mouse on a monitor and raise your hand.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Camera position") {
+                CameraPlacementView(preferences: preferences)
+                Text("The control box is laid out the way your screens sit around the camera. Reach toward a screen and the cursor goes there, whether your screens are side by side or stacked.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Control box") {
                 slider("Width", value: $preferences.boxWidth, in: 0.2...1.0, format: "%.0f%%", scale: 100)
+                Toggle("Match the shape of your screens", isOn: $preferences.matchScreenShape)
                 slider("Height", value: $preferences.boxHeight, in: 0.2...1.0, format: "%.0f%%", scale: 100)
+                    .disabled(preferences.matchScreenShape)
                 slider("Vertical offset", value: $preferences.boxOffsetY, in: -0.3...0.3, format: "%+.0f%%", scale: 100)
                 Toggle("Mirror camera (hand right = cursor right)", isOn: $preferences.mirrored)
-                Text("The green box in the preview is the area that maps to your whole screen. Smaller means less arm travel but coarser aim.")
+                Text("The dashed box in the preview maps to your screens. Smaller means less arm travel but coarser aim. Matching the shape keeps up-down and left-right moves at the same speed, which matters most for stacked screens.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Feel") {

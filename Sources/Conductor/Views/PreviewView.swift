@@ -11,7 +11,7 @@ struct PreviewView: View {
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             CameraLayerView(session: session, hands: state.hands,
-                            controlBox: controlBox)
+                            controlBox: ScreenMapper.visionRect(forViewBox: state.controlBox, mirrored: preferences.mirrored))
             HStack(spacing: 12) {
                 Text(state.gestureLabel).fontWeight(.semibold)
                 Text(String(format: "%.0f fps", state.fps)).foregroundStyle(.secondary)
@@ -26,15 +26,6 @@ struct PreviewView: View {
         }
         .frame(minWidth: 480, minHeight: 360)
         .aspectRatio(4.0 / 3.0, contentMode: .fit)
-    }
-
-    /// The control box in Vision's normalized, bottom-left-origin space, before mirroring. The
-    /// preview layer handles mirroring itself, so this must not.
-    private var controlBox: CGRect {
-        let w = preferences.boxWidth, h = preferences.boxHeight
-        let left = (1 - w) / 2
-        let bottom = (1 - h) / 2 + preferences.boxOffsetY
-        return CGRect(x: left, y: bottom, width: w, height: h)
     }
 }
 

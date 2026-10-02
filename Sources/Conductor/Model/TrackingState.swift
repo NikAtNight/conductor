@@ -9,4 +9,6 @@ final class TrackingState: ObservableObject {
     @Published var isRunning = false
     @Published var fps: Double = 0
     @Published var error: String?
+    /// The control box the pipeline is using, in view space (see ControlBox).
+    @Published var controlBox = CGRect(x: 0.2, y: 0.2, width: 0.6, height: 0.5)
 }

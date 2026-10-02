@@ -26,12 +26,7 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         // 640x480 is plenty for hand pose and keeps Vision well under a frame budget at 30 fps.
         session.sessionPreset = .vga640x480
 
-        let discovery = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera],
-            mediaType: .video, position: .unspecified)
-        guard let device = discovery.devices.first(where: { $0.position == .front }) ?? discovery.devices.first else {
-            throw SetupError.noCamera
-        }
+        guard let device = Self.preferredDevice() else { throw SetupError.noCamera }
         let input = try AVCaptureDeviceInput(device: device)
         guard session.canAddInput(input) else { throw SetupError.cannotAddInput }
         session.addInput(input)
@@ -42,6 +37,18 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         guard session.canAddOutput(output) else { throw SetupError.cannotAddOutput }
         session.addOutput(output)
         configured = true
+    }
+
+    /// The camera Conductor uses: a front-facing one if any, else the first available.
+    static func preferredDevice() -> AVCaptureDevice? {
+        let discovery = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera],
+            mediaType: .video, position: .unspecified)
+        return discovery.devices.first(where: { $0.position == .front }) ?? discovery.devices.first
+    }
+
+    static var preferredDeviceIsBuiltIn: Bool {
+        preferredDevice()?.deviceType == .builtInWideAngleCamera
     }
 
     func start() {

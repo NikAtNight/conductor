@@ -15,6 +15,9 @@ final class Preferences: ObservableObject {
     @Published var zoomWithKeys: Bool { didSet { save() } }
     @Published var displayMode: DisplayMode { didSet { save() } }
     @Published var gestureMap: GestureMap { didSet { gestureMap.save(to: defaults) } }
+    @Published var matchScreenShape: Bool { didSet { save() } }
+    /// Nil means automatic: see CameraPlacement.resolve.
+    @Published var cameraPlacement: CameraPlacement? { didSet { save() } }
 
     enum DisplayMode: String, CaseIterable, Identifiable {
         /// The control box covers the union of every connected display.
@@ -45,13 +48,15 @@ final class Preferences: ObservableObject {
         var zoomWithKeys: Bool
         var displayMode: DisplayMode
         var gestureMap: GestureMap
+        var matchScreenShape: Bool
+        var cameraPlacement: CameraPlacement?
     }
 
     var snapshot: Snapshot {
         Snapshot(boxWidth: boxWidth, boxHeight: boxHeight, boxOffsetY: boxOffsetY, mirrored: mirrored,
                  smoothing: smoothing, pinchEngage: pinchEngage, pinchRelease: pinchRelease,
                  scrollGain: scrollGain, zoomWithKeys: zoomWithKeys, displayMode: displayMode,
-                 gestureMap: gestureMap)
+                 gestureMap: gestureMap, matchScreenShape: matchScreenShape, cameraPlacement: cameraPlacement)
     }
 
     private let defaults: UserDefaults
@@ -75,6 +80,9 @@ final class Preferences: ObservableObject {
         zoomWithKeys = b("zoomWithKeys", false)
         displayMode = DisplayMode(rawValue: defaults.string(forKey: "displayMode") ?? "") ?? .all
         gestureMap = GestureMap.load(from: defaults)
+        matchScreenShape = b("matchScreenShape", true)
+        cameraPlacement = defaults.data(forKey: "cameraPlacement")
+            .flatMap { try? JSONDecoder().decode(CameraPlacement.self, from: $0) }
     }
 
     func resetToDefaults() {
@@ -82,6 +90,8 @@ final class Preferences: ObservableObject {
         smoothing = 0.6; pinchEngage = 0.35; pinchRelease = 0.55; scrollGain = 1.0; zoomWithKeys = false
         displayMode = .all
         gestureMap = .standard
+        matchScreenShape = true
+        cameraPlacement = nil
     }
 
     private func save() {
@@ -95,5 +105,11 @@ final class Preferences: ObservableObject {
         defaults.set(scrollGain, forKey: "scrollGain")
         defaults.set(zoomWithKeys, forKey: "zoomWithKeys")
         defaults.set(displayMode.rawValue, forKey: "displayMode")
+        defaults.set(matchScreenShape, forKey: "matchScreenShape")
+        if let cameraPlacement, let data = try? JSONEncoder().encode(cameraPlacement) {
+            defaults.set(data, forKey: "cameraPlacement")
+        } else {
+            defaults.removeObject(forKey: "cameraPlacement")
+        }
     }
 }

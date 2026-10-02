@@ -21,6 +21,8 @@ final class Engine: @unchecked Sendable {
     private var prefs: Preferences.Snapshot
     private var displays: [CGRect] = []
     private var screen: CGRect = .zero
+    private var cameraMount: (x: CGFloat, display: CGRect) = (0, .zero)
+    private var box = CGRect(x: 0.2, y: 0.2, width: 0.6, height: 0.5)
     private var wasIdle = true
     private var onPause: (() -> Void)?
     private var accessibilityOK = false
@@ -84,13 +86,18 @@ final class Engine: @unchecked Sendable {
     @MainActor
     func refreshFromMainActor(promptForAccessibility: Bool = false) {
         let snapshot = preferences.snapshot
-        let bounds = Self.displayBounds()
+        let layout = DisplayLayout.current()
+        let bounds = layout.map(\.bounds)
+        let resolved = CameraPlacement.resolve(snapshot.cameraPlacement, displays: layout,
+                                               builtInCamera: CameraCapture.preferredDeviceIsBuiltIn)
         let trusted = Permissions.accessibilityGranted(prompt: promptForAccessibility)
         onPause = { [weak self] in self?.stop() }
         camera.queue.async { [self] in
             prefs = snapshot
             displays = bounds
             screen = Self.targetScreen(mode: snapshot.displayMode, displays: bounds, current: screen)
+            if let resolved { cameraMount = (resolved.x, resolved.display.bounds) }
+            relayoutBox()
             accessibilityOK = trusted
             if recognizer.map != snapshot.gestureMap {
                 // Rebinding mid-gesture could orphan a held button, so let go and start clean.
@@ -103,15 +110,14 @@ final class Engine: @unchecked Sendable {
         }
     }
 
-    /// Every active display in CGEvent coordinates (origin top-left of the main display). AppKit's
-    /// NSScreen uses bottom-left, so don't pass its frames straight through.
-    private static func displayBounds() -> [CGRect] {
-        var count: UInt32 = 0
-        CGGetActiveDisplayList(0, nil, &count)
-        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
-        CGGetActiveDisplayList(count, &ids, &count)
-        let bounds = ids.prefix(Int(count)).map { CGDisplayBounds($0) }
-        return bounds.isEmpty ? [CGDisplayBounds(CGMainDisplayID())] : bounds
+    /// Recomputes the control box for the current target and camera. Camera queue only.
+    private func relayoutBox() {
+        box = ControlBox.layout(ControlBox.Input(
+            width: prefs.boxWidth, height: prefs.boxHeight, offsetY: prefs.boxOffsetY,
+            matchShape: prefs.matchScreenShape, target: screen,
+            cameraX: cameraMount.x, cameraDisplay: cameraMount.display))
+        let published = box
+        Task { @MainActor in self.state.controlBox = published }
     }
 
     /// Which rectangle the control box maps onto. `current` is kept in follow-cursor mode until the
@@ -140,18 +146,21 @@ final class Engine: @unchecked Sendable {
         // On reacquiring the hand, follow-cursor mode re-targets the display the cursor is on.
         if !hands.isEmpty, wasIdle, prefs.displayMode == .followCursor, displays.count > 1 {
             let cursor = CGEvent(source: nil)?.location
-            screen = Self.targetScreen(mode: .followCursor, displays: displays, current: screen, cursor: cursor)
+            let next = Self.targetScreen(mode: .followCursor, displays: displays, current: screen, cursor: cursor)
+            if next != screen {
+                screen = next
+                relayoutBox()
+            }
         }
         let output = recognizer.update(hands: hands, at: now)
         wasIdle = output.mode == .idle
-        let mapper = ScreenMapper(boxWidth: prefs.boxWidth, boxHeight: prefs.boxHeight,
-                                  boxOffsetY: prefs.boxOffsetY, mirrored: prefs.mirrored, screen: screen)
+        let mapper = ScreenMapper(box: box, mirrored: prefs.mirrored, screen: screen)
         if let pointer = output.pointer {
             // Filter in normalized frame space, not pixels. The speed term in One Euro is tuned for
             // units where a fast hand moves about 1.0 per second; in pixels even tremor is hundreds
             // per second and the filter opens all the way up, which is exactly the jitter it exists
             // to remove.
-            let target = mapper.map(filter.filter(pointer, at: now))
+            let target = DisplayLayout.snap(mapper.map(filter.filter(pointer, at: now)), to: displays)
             if accessibilityOK, target.distance(to: lastPosted) >= Self.minimumMovePixels {
                 input.move(to: target)
                 lastPosted = target

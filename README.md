@@ -59,12 +59,22 @@ with `tccutil reset Accessibility com.talix.conductor` and allow it again.
 
 Settings > Tracking > Displays has three modes:
 
-- All displays. The control box covers every monitor at once. Simple, but a wide desktop means
-  coarser horizontal aim.
+- All displays. The control box covers every monitor at once.
 - Display under the cursor. Each time your hand comes back into view, Conductor locks onto the
   display the cursor is on. Park the mouse on a monitor, raise your hand, and that monitor is yours
   until the hand drops out of frame.
 - Main display only.
+
+Side-by-side and stacked layouts both work. A few things keep them predictable:
+
+- Camera position. Click where your webcam sits on the display map in Settings. The control box is
+  laid out the way your screens sit around the camera, so reaching toward a screen moves the cursor
+  onto it. Without a choice, Conductor assumes a built-in camera sits on the built-in display and
+  any other camera sits on top of the main display.
+- Match the shape of your screens. On by default. The box takes the shape of the area it maps to,
+  so a tall stacked layout gets a tall box and up-down moves at the same speed as left-right.
+- Gaps. Screens of different sizes leave corners that belong to no display. A point that lands in
+  one moves to the nearest edge of the nearest screen.
 
 ## Tuning
 
