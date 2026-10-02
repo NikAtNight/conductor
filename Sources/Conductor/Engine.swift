@@ -13,6 +13,7 @@ final class Engine: @unchecked Sendable {
     private let tracker = HandTracker()
     private let input = InputController()
     private var frameTimes: [CFTimeInterval] = []
+    private var permissionTimer: Timer?
 
     // Pipeline state, touched only on the camera queue.
     private var filter = PointFilter()
@@ -50,10 +51,26 @@ final class Engine: @unchecked Sendable {
             : "Accessibility not granted. Cursor won't move until you allow Conductor in System Settings."
         camera.start()
         state.isRunning = true
+        // The grant can be flipped in System Settings while we run, and AXIsProcessTrusted picks it
+        // up live. Poll so the user doesn't have to pause and restart to make the cursor move.
+        permissionTimer?.invalidate()
+        permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.recheckAccessibility() }
+        }
+    }
+
+    @MainActor
+    private func recheckAccessibility() {
+        let trusted = Permissions.accessibilityGranted(prompt: false)
+        camera.queue.async { [self] in accessibilityOK = trusted }
+        state.error = trusted ? nil
+            : "Accessibility not granted. Cursor won't move until you allow Conductor in System Settings."
     }
 
     @MainActor
     func stop() {
+        permissionTimer?.invalidate()
+        permissionTimer = nil
         camera.stop()
         camera.queue.async { [input] in input.releaseAll() }
         state.isRunning = false
