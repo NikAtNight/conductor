@@ -70,6 +70,18 @@ struct HandPose: Equatable {
         return thumbOut > 0.5 && thumbToIndex > 0.6
     }
 
+    /// Index and middle straight, ring and little curled: the "peace sign" used for swipes.
+    var isTwoFingerPose: Bool {
+        guard let wrist = self[.wrist] else { return false }
+        func reach(_ tip: HandJoint, _ pip: HandJoint) -> CGFloat? {
+            guard let t = self[tip], let p = self[pip] else { return nil }
+            return t.distance(to: wrist) / max(p.distance(to: wrist), 0.0001)
+        }
+        guard let index = reach(.indexTip, .indexPIP), let middle = reach(.middleTip, .middlePIP),
+              let ring = reach(.ringTip, .ringPIP), let little = reach(.littleTip, .littlePIP) else { return false }
+        return index > 1.1 && middle > 1.1 && ring < 1.0 && little < 1.0
+    }
+
     /// True when index, middle, ring and little fingertips are all closer to the wrist than
     /// their own knuckles are, which only happens with curled fingers.
     var isFist: Bool {

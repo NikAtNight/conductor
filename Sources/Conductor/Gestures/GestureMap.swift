@@ -3,7 +3,7 @@ import CoreGraphics
 
 /// Something the hand can do that Conductor detects.
 enum Trigger: String, CaseIterable, Codable, Identifiable {
-    case indexPinch, middlePinch, ringPinch, littlePinch, fist, twoHandPinch
+    case indexPinch, middlePinch, ringPinch, littlePinch, fist, twoHandPinch, swipeLeft, swipeRight
 
     var id: String { rawValue }
 
@@ -15,6 +15,8 @@ enum Trigger: String, CaseIterable, Codable, Identifiable {
         case .littlePinch: return "Thumb + little pinch"
         case .fist: return "Closed fist"
         case .twoHandPinch: return "Both hands pinched"
+        case .swipeLeft: return "Two-finger swipe left"
+        case .swipeRight: return "Two-finger swipe right"
         }
     }
 
@@ -25,11 +27,12 @@ enum Trigger: String, CaseIterable, Codable, Identifiable {
         case .middlePinch: return .middleTip
         case .ringPinch: return .ringTip
         case .littlePinch: return .littleTip
-        case .fist, .twoHandPinch: return nil
+        case .fist, .twoHandPinch, .swipeLeft, .swipeRight: return nil
         }
     }
 
     static let pinches: [Trigger] = [.indexPinch, .middlePinch, .ringPinch, .littlePinch]
+    static let swipes: [Trigger] = [.swipeLeft, .swipeRight]
 }
 
 /// A key plus modifiers, stored as CGEvent values so posting is a direct pass-through.
@@ -107,6 +110,9 @@ struct GestureMap: Codable, Equatable {
         .littlePinch: .none,
         .fist: .scroll,
         .twoHandPinch: .zoom,
+        // Like a trackpad: swipe right goes back, swipe left goes forward.
+        .swipeRight: .shortcut(Shortcut(keyCode: 33, modifiers: CGEventFlags.maskCommand.rawValue)), // ⌘[
+        .swipeLeft: .shortcut(Shortcut(keyCode: 30, modifiers: CGEventFlags.maskCommand.rawValue)),  // ⌘]
     ])
 
     subscript(_ trigger: Trigger) -> GestureAction {
@@ -116,7 +122,11 @@ struct GestureMap: Codable, Equatable {
 
     static func load(from defaults: UserDefaults) -> GestureMap {
         guard let data = defaults.data(forKey: "gestureMap"),
-              let map = try? JSONDecoder().decode(GestureMap.self, from: data) else { return .standard }
+              var map = try? JSONDecoder().decode(GestureMap.self, from: data) else { return .standard }
+        // Triggers added after the map was saved get their default binding.
+        for trigger in Trigger.allCases where map.bindings[trigger] == nil {
+            map.bindings[trigger] = GestureMap.standard[trigger]
+        }
         return map
     }
 

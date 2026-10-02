@@ -27,6 +27,10 @@ final class Engine: @unchecked Sendable {
     private var accessibilityOK = false
     private var zoomAccumulator: CGFloat = 0
     private var lastPosted = CGPoint(x: -1, y: -1)
+    private var relative = RelativePointer()
+    private var relativeCursor: CGPoint = .zero
+    private var momentum = MomentumScroller()
+    private var previousMode: GestureRecognizer.Mode = .idle
 
     @MainActor
     init(state: TrackingState, preferences: Preferences) {
@@ -110,6 +114,10 @@ final class Engine: @unchecked Sendable {
             recognizer.config.requireReadyPose = snapshot.requireReadyPose
             recognizer.config.dwellClick = snapshot.dwellClick
             recognizer.config.dwellTime = snapshot.dwellTime
+            recognizer.config.mirrored = snapshot.mirrored
+            relative.speed = CGFloat(snapshot.trackpadSpeed)
+            relative.mirrored = snapshot.mirrored
+            if !snapshot.momentumScroll { momentum.stop() }
         }
     }
 
@@ -163,17 +171,34 @@ final class Engine: @unchecked Sendable {
             // units where a fast hand moves about 1.0 per second; in pixels even tremor is hundreds
             // per second and the filter opens all the way up, which is exactly the jitter it exists
             // to remove.
-            let target = DisplayLayout.snap(mapper.map(filter.filter(pointer, at: now)), to: displays)
+            let smoothed = filter.filter(pointer, at: now)
+            let target: CGPoint
+            if prefs.pointerMode == .relative {
+                if let delta = relative.delta(for: smoothed, at: now, screenWidth: screen.width) {
+                    relativeCursor.x += delta.dx
+                    relativeCursor.y += delta.dy
+                } else {
+                    // First frame after the hand (re)appears: start from wherever the cursor is.
+                    relativeCursor = CGEvent(source: nil)?.location ?? relativeCursor
+                }
+                relativeCursor = DisplayLayout.snap(relativeCursor, to: displays)
+                target = relativeCursor
+            } else {
+                target = DisplayLayout.snap(mapper.map(smoothed), to: displays)
+            }
             if accessibilityOK, target.distance(to: lastPosted) >= Self.minimumMovePixels {
                 input.move(to: target)
                 lastPosted = target
             }
         } else {
             filter.reset()
+            relative.reset()
         }
         if accessibilityOK {
             for action in output.actions { perform(action) }
+            coast(after: output)
         }
+        previousMode = output.mode
         let label = output.label
         let clicked = accessibilityOK && output.actions.contains {
             switch $0 {
@@ -206,6 +231,27 @@ final class Engine: @unchecked Sendable {
     /// Hands must spread or close this far (normalized) to fire one cmd+= / cmd+- press.
     private static let zoomKeyStep: CGFloat = 0.04
 
+    /// Momentum scrolling: when a scroll ends mid-flick, keep scrolling and slow down. Any click or
+    /// new gesture stops it.
+    private func coast(after output: GestureRecognizer.Output) {
+        let interrupted = output.actions.contains {
+            switch $0 {
+            case .leftDown, .rightClick, .middleClick, .shortcut, .zoom: return true
+            default: return false
+            }
+        }
+        if interrupted || output.mode == .drag || output.mode == .zoom {
+            momentum.stop()
+            return
+        }
+        if previousMode == .scroll, output.mode != .scroll, prefs.momentumScroll {
+            momentum.released()
+        }
+        if output.mode != .scroll, let step = momentum.tick() {
+            input.scroll(dy: Int32(step.rounded()))
+        }
+    }
+
     private func perform(_ action: GestureRecognizer.Action) {
         switch action {
         case .leftDown(let count): input.leftDown(clickCount: count)
@@ -217,6 +263,7 @@ final class Engine: @unchecked Sendable {
             // Natural scrolling: hand up means content moves up, which is a negative wheel delta.
             let pixels = -dy * Self.scrollPixelsPerFrame * CGFloat(prefs.scrollGain)
             input.scroll(dy: Int32(pixels.rounded()))
+            momentum.scrolled(pixels)
         case .zoom(let delta):
             if prefs.zoomWithKeys {
                 zoomAccumulator += delta

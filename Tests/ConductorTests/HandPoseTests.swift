@@ -29,6 +29,16 @@ enum PoseFixtures {
         return hand
     }
 
+    /// Index and middle up, ring and little curled down to their knuckles.
+    static func twoFingers(at wrist: CGPoint = CGPoint(x: 0.5, y: 0.3)) -> HandPose {
+        var hand = openHand(at: wrist)
+        for (tip, mcp) in [(HandJoint.ringTip, HandJoint.ringMCP), (.littleTip, .littleMCP)] {
+            let knuckle = hand[mcp]!
+            hand.joints[tip] = CGPoint(x: knuckle.x, y: knuckle.y - 0.01)
+        }
+        return hand
+    }
+
     /// Fingers curled so every fingertip is nearer the wrist than its PIP joint.
     static func fist(at wrist: CGPoint = CGPoint(x: 0.5, y: 0.3)) -> HandPose {
         var hand = openHand(at: wrist)

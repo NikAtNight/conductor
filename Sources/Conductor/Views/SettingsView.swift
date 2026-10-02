@@ -5,6 +5,14 @@ struct TrackingSettingsView: View {
 
     var body: some View {
         Form {
+            Section("Pointer") {
+                Picker("Cursor moves", selection: $preferences.pointerMode) {
+                    ForEach(Preferences.PointerMode.allCases) { Text($0.title).tag($0) }
+                }
+                SettingSlider(title: "Trackpad speed", value: $preferences.trackpadSpeed, range: 0.3...3.0, format: "%.1fx")
+                    .disabled(preferences.pointerMode != .relative)
+                Caption("Like a trackpad: the cursor moves by how far your hand moves, faster when you move faster. To reposition, drop your hand out of view and bring it back. The control box only applies to the other mode.")
+            }
             Section("Control box") {
                 SettingSlider(title: "Width", value: $preferences.boxWidth, range: 0.2...1.0, format: "%.0f%%", scale: 100)
                 Toggle("Match the shape of your screens", isOn: $preferences.matchScreenShape)
@@ -21,6 +29,7 @@ struct TrackingSettingsView: View {
                 SettingSlider(title: "Pinch release", value: $preferences.pinchRelease, range: 0.3...0.9, format: "%.2f")
                 Caption("Thumb-to-index distance in hand widths. Release must stay above engage or clicks will chatter.")
                 SettingSlider(title: "Scroll speed", value: $preferences.scrollGain, range: 0.2...3.0, format: "%.1fx")
+                Toggle("Keep scrolling after a flick", isOn: $preferences.momentumScroll)
             }
             Section("Zoom") {
                 Picker("Send zoom as", selection: $preferences.zoomWithKeys) {

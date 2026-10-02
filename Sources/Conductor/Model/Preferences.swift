@@ -22,6 +22,18 @@ final class Preferences: ObservableObject {
     @Published var dwellTime: Double { didSet { save() } }
     @Published var showCursorRing: Bool { didSet { save() } }
     @Published var soundCues: Bool { didSet { save() } }
+    @Published var pointerMode: PointerMode { didSet { save() } }
+    @Published var trackpadSpeed: Double { didSet { save() } }
+    @Published var momentumScroll: Bool { didSet { save() } }
+
+    enum PointerMode: String, CaseIterable, Identifiable {
+        /// The cursor sits wherever the hand is inside the control box.
+        case absolute
+        /// The cursor moves by how far the hand moves, like a trackpad.
+        case relative
+        var id: String { rawValue }
+        var title: String { self == .absolute ? "To where your hand is" : "Like a trackpad" }
+    }
     /// Nil means automatic: see CameraPlacement.resolve.
     @Published var cameraPlacement: CameraPlacement? { didSet { save() } }
 
@@ -56,6 +68,9 @@ final class Preferences: ObservableObject {
         var gestureMap: GestureMap
         var matchScreenShape: Bool
         var cameraPlacement: CameraPlacement?
+        var pointerMode: PointerMode
+        var trackpadSpeed: Double
+        var momentumScroll: Bool
         var mainHand: GestureRecognizer.MainHand
         var requireReadyPose: Bool
         var dwellClick: Bool
@@ -67,6 +82,7 @@ final class Preferences: ObservableObject {
                  smoothing: smoothing, pinchEngage: pinchEngage, pinchRelease: pinchRelease,
                  scrollGain: scrollGain, zoomWithKeys: zoomWithKeys, displayMode: displayMode,
                  gestureMap: gestureMap, matchScreenShape: matchScreenShape, cameraPlacement: cameraPlacement,
+                 pointerMode: pointerMode, trackpadSpeed: trackpadSpeed, momentumScroll: momentumScroll,
                  mainHand: mainHand, requireReadyPose: requireReadyPose, dwellClick: dwellClick, dwellTime: dwellTime)
     }
 
@@ -98,6 +114,9 @@ final class Preferences: ObservableObject {
         dwellTime = d("dwellTime", 0.8)
         showCursorRing = b("showCursorRing", true)
         soundCues = b("soundCues", false)
+        pointerMode = PointerMode(rawValue: defaults.string(forKey: "pointerMode") ?? "") ?? .absolute
+        trackpadSpeed = d("trackpadSpeed", 1.0)
+        momentumScroll = b("momentumScroll", true)
         cameraPlacement = defaults.data(forKey: "cameraPlacement")
             .flatMap { try? JSONDecoder().decode(CameraPlacement.self, from: $0) }
     }
@@ -115,6 +134,9 @@ final class Preferences: ObservableObject {
         dwellTime = 0.8
         showCursorRing = true
         soundCues = false
+        pointerMode = .absolute
+        trackpadSpeed = 1.0
+        momentumScroll = true
     }
 
     private func save() {
@@ -135,6 +157,9 @@ final class Preferences: ObservableObject {
         defaults.set(dwellTime, forKey: "dwellTime")
         defaults.set(showCursorRing, forKey: "showCursorRing")
         defaults.set(soundCues, forKey: "soundCues")
+        defaults.set(pointerMode.rawValue, forKey: "pointerMode")
+        defaults.set(trackpadSpeed, forKey: "trackpadSpeed")
+        defaults.set(momentumScroll, forKey: "momentumScroll")
         if let cameraPlacement, let data = try? JSONEncoder().encode(cameraPlacement) {
             defaults.set(data, forKey: "cameraPlacement")
         } else {

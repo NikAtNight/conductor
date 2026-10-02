@@ -18,6 +18,7 @@ struct GestureRecognizer {
         case drag = "Pinch"
         case scroll = "Scroll"
         case zoom = "Zoom"
+        case swipe = "Two fingers: swipe left or right"
     }
 
     enum Action: Equatable {
@@ -98,6 +99,11 @@ struct GestureRecognizer {
         var dwellTime: TimeInterval = 0.8
         /// Pointer must stay within this radius (frame units) for a dwell to count.
         var dwellRadius: CGFloat = 0.015
+        /// Matches ScreenMapper: with mirroring, moving your hand to your left is "left".
+        var mirrored = true
+        /// A swipe is this much sideways palm travel (frame units) within `swipeWindow` seconds.
+        var swipeDistance: CGFloat = 0.12
+        var swipeWindow: TimeInterval = 0.3
     }
 
     var config: Config
@@ -129,6 +135,10 @@ struct GestureRecognizer {
     /// fingers shifts the thumb-index midpoint a little.
     private var dwellRearm = false
     private var events: [Event] = []
+    /// Recent palm x positions while in the two-finger pose, oldest first.
+    private var swipeTrail: [(time: TimeInterval, x: CGFloat)] = []
+    /// One swipe per pose: set after a swipe fires, cleared when the pose ends.
+    private var swipeFired = false
 
     init(config: Config = Config(), map: GestureMap = .standard) {
         self.config = config
@@ -162,7 +172,7 @@ struct GestureRecognizer {
             : nil
 
         if isPaused {
-            return pausedUpdate(primary: primary, other: other)
+            return pausedUpdate(primary: primary, other: other, at: time)
         }
         if config.requireReadyPose, !hasControl {
             return waitingUpdate(primary: primary, at: time)
@@ -189,7 +199,20 @@ struct GestureRecognizer {
                       feedback: Feedback(ready: 1))
     }
 
-    private mutating func pausedUpdate(primary: HandPose, other: HandPose?) -> Output {
+    private mutating func pausedUpdate(primary: HandPose, other: HandPose?, at time: TimeInterval) -> Output {
+        // A swipe bound to pause can resume too.
+        if Trigger.swipes.contains(where: { map[$0] == .pauseTracking }), primary.isTwoFingerPose {
+            if let fired = detectSwipe(primary, at: time), map[fired] == .pauseTracking {
+                isPaused = false
+                hasControl = true
+                events.append(.resumed)
+                dwellRearm = true
+                mode = .point
+                return output(.point, pointer: nil, actions: [], label: "Resumed")
+            }
+        } else {
+            resetSwipe()
+        }
         if let held = pauseHeld {
             if !isEngaged(held, primary: primary, other: other, holding: true) { pauseHeld = nil }
         } else if let trigger = Trigger.allCases.first(where: {
@@ -211,6 +234,10 @@ struct GestureRecognizer {
     }
 
     private mutating func controlUpdate(primary: HandPose, other: HandPose?, at time: TimeInterval) -> Output {
+        if active == nil, Trigger.swipes.contains(where: { map[$0] != .none }), primary.isTwoFingerPose {
+            return swipeUpdate(primary: primary, at: time)
+        }
+        resetSwipe()
         var actions: [Action] = []
 
         // Does the current trigger still hold? Pinches release through hysteresis; the others are
@@ -253,6 +280,52 @@ struct GestureRecognizer {
         mode = Self.mode(for: action)
         let label = active.map { "\($0.title): \(map[$0].title)" } ?? Mode.point.rawValue
         return output(mode, pointer: pointer, actions: actions, label: label, feedback: feedback)
+    }
+
+    // MARK: Swipes
+
+    /// Two-finger pose: the cursor holds still, and a quick sideways flick fires a swipe trigger.
+    private mutating func swipeUpdate(primary: HandPose, at time: TimeInterval) -> Output {
+        dwellAnchor = nil
+        dwellRearm = true
+        mode = .swipe
+        guard let trigger = detectSwipe(primary, at: time) else {
+            return output(.swipe, pointer: nil, actions: [], label: Mode.swipe.rawValue)
+        }
+        return output(.swipe, pointer: nil, actions: tapActions(for: trigger), label: trigger.title)
+    }
+
+    /// Tracks the palm while in the two-finger pose and reports a swipe once per pose.
+    private mutating func detectSwipe(_ hand: HandPose, at time: TimeInterval) -> Trigger? {
+        guard let x = hand.palmCenter?.x else { return nil }
+        swipeTrail.append((time, x))
+        swipeTrail.removeAll { time - $0.time > config.swipeWindow }
+        guard !swipeFired, let first = swipeTrail.first else { return nil }
+        // Vision x grows to the camera's right. With mirroring that is the user's left.
+        let travel = (x - first.x) * (config.mirrored ? -1 : 1)
+        guard abs(travel) >= config.swipeDistance else { return nil }
+        swipeFired = true
+        return travel < 0 ? .swipeLeft : .swipeRight
+    }
+
+    private mutating func resetSwipe() {
+        swipeTrail.removeAll()
+        swipeFired = false
+    }
+
+    /// What a one-shot trigger does. Button actions become a full click; motion actions do nothing.
+    private mutating func tapActions(for trigger: Trigger) -> [Action] {
+        switch map[trigger] {
+        case .leftButton: return [.leftDown(clickCount: 1), .leftUp(clickCount: 1)]
+        case .rightClick: return [.rightClick]
+        case .middleClick: return [.middleClick]
+        case .shortcut(let s): return [.shortcut(s)]
+        case .pauseTracking:
+            isPaused = true
+            events.append(.paused)
+            return []
+        case .scroll, .zoom, .none: return []
+        }
     }
 
     // MARK: Ready pose and dwell
@@ -314,7 +387,10 @@ struct GestureRecognizer {
         case .twoHandPinch:
             guard let other else { return false }
             return pinchDistance(primary, .indexTip) < threshold && pinchDistance(other, .indexTip) < threshold
-        default:
+        case .swipeLeft, .swipeRight:
+            // Swipes are momentary; they can't be "held" and can't resume a pause.
+            return false
+        case .indexPinch, .middlePinch, .ringPinch, .littlePinch:
             return pinchDistance(primary, trigger.fingertip!) < threshold
         }
     }

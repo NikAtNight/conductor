@@ -12,7 +12,7 @@ final class SettingsWindowController: NSWindowController {
         tabs.tabStyle = .toolbar
 
         var all: [(String, String, AnyView, CGFloat)] = [
-            ("Tracking", "hand.raised", AnyView(TrackingSettingsView(preferences: preferences)), 600),
+            ("Tracking", "hand.raised", AnyView(TrackingSettingsView(preferences: preferences)), 680),
             ("Displays", "display.2", AnyView(DisplaySettingsView(preferences: preferences)), 470),
             ("Gestures", "hand.tap", AnyView(GestureSettingsView(preferences: preferences)), 560),
             ("Hands", "hand.wave", AnyView(HandsSettingsView(preferences: preferences)), 560),
