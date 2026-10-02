@@ -6,6 +6,8 @@ import Carbon.HIToolbox
 final class InputController: @unchecked Sendable {
     private var position: CGPoint
     private var leftDown = false
+    /// Keys held by "Hold a key" bindings, so they can always be let go.
+    private var heldKeys: [UInt16: Shortcut] = [:]
     private let source = CGEventSource(stateID: .combinedSessionState)
 
     init() {
@@ -62,10 +64,59 @@ final class InputController: @unchecked Sendable {
         post(up)
     }
 
+    /// Presses a key and leaves it down until `keyUp`. Modifier keys go out as flagsChanged events
+    /// with the left/right device bit set, which is how apps (LocalFlow included) tell Right ⌘
+    /// from Left ⌘.
+    func keyDown(_ key: Shortcut) {
+        guard heldKeys[key.keyCode] == nil else { return }
+        heldKeys[key.keyCode] = key
+        post(Self.keyEvent(key, down: true, source: source))
+    }
+
+    func keyUp(_ key: Shortcut) {
+        guard heldKeys.removeValue(forKey: key.keyCode) != nil else { return }
+        post(Self.keyEvent(key, down: false, source: source))
+    }
+
+    /// Modifier flag and NX device bit for each modifier key code.
+    static func modifier(for keyCode: UInt16) -> (flag: CGEventFlags, device: UInt64)? {
+        switch keyCode {
+        case 55: return (.maskCommand, 0x08)     // left command
+        case 54: return (.maskCommand, 0x10)     // right command
+        case 56: return (.maskShift, 0x02)
+        case 60: return (.maskShift, 0x04)
+        case 58: return (.maskAlternate, 0x20)
+        case 61: return (.maskAlternate, 0x40)
+        case 59: return (.maskControl, 0x01)
+        case 62: return (.maskControl, 0x2000)
+        case 63: return (.maskSecondaryFn, 0)
+        default: return nil
+        }
+    }
+
+    /// The flags a hold-key event carries: the binding's own modifiers, plus the key's own flag and
+    /// device bit while a modifier key is down.
+    static func flags(for key: Shortcut, down: Bool) -> CGEventFlags {
+        var flags = key.flags
+        if down, let modifier = modifier(for: key.keyCode) {
+            flags.insert(modifier.flag)
+            flags.insert(CGEventFlags(rawValue: modifier.device))
+        }
+        return flags
+    }
+
+    private static func keyEvent(_ key: Shortcut, down: Bool, source: CGEventSource?) -> CGEvent? {
+        let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(key.keyCode), keyDown: down)
+        if modifier(for: key.keyCode) != nil { event?.type = .flagsChanged }
+        event?.flags = flags(for: key, down: down)
+        return event
+    }
+
     /// Lets go of anything held. Called when the hand disappears or tracking pauses so a drag
     /// never gets stuck on.
     func releaseAll() {
         if leftDown { leftUp() }
+        for key in heldKeys.values { keyUp(key) }
     }
 
     private func post(_ event: CGEvent?) {

@@ -350,6 +350,8 @@ final class Engine: @unchecked Sendable {
         case .rightClick: input.rightClick()
         case .middleClick: input.middleClick()
         case .shortcut(let s): input.keyPress(CGKeyCode(s.keyCode), flags: s.flags)
+        case .keyDown(let s): input.keyDown(s)
+        case .keyUp(let s): input.keyUp(s)
         case .scroll(let dy):
             // Natural scrolling: hand up means content moves up, which is a negative wheel delta.
             let pixels = -dy * Self.scrollPixelsPerFrame * CGFloat(prefs.scrollGain)

@@ -40,6 +40,18 @@ struct GestureSettingsView: View {
                     GestureRow(trigger: trigger, action: binding(for: trigger))
                 }
             }
+            Section("Push to talk") {
+                HStack {
+                    Text("Thumb + ring pinch talks to LocalFlow")
+                    Spacer()
+                    Button("Set up") {
+                        var map = currentMap
+                        map[.ringPinch] = .holdKey(Shortcut(keyCode: 54, modifiers: 0))
+                        setMap(map)
+                    }
+                }
+                Caption("Holds Right ⌘, LocalFlow's dictation key, for as long as you pinch. Any push-to-talk app works the same way: pick Hold a key for a gesture and record that app's key. Pressing a modifier on its own records just that key.")
+            }
             Section {
                 Caption("Only one trigger is active at a time. Both hands beat a fist, a fist beats a pinch, and among pinches the fingertip closest to the thumb wins. Scroll and zoom on a one-handed trigger use up and down hand travel. For swipes, raise index and middle fingers with the others curled, then flick sideways; the cursor holds still in that pose.")
                 HStack {
@@ -98,15 +110,20 @@ private struct GestureRow: View {
     let trigger: Trigger
     @Binding var action: GestureAction
 
-    private static let placeholder = GestureAction.shortcut(Shortcut(keyCode: 0, modifiers: 0))
-
-    /// The picker works on kinds. A recorded shortcut still shows as the generic "Shortcut" choice,
-    /// and choosing "Shortcut" over an existing one keeps the recorded key.
+    /// The picker works on kinds. A recorded key shows as its generic choice; switching between
+    /// "Keyboard shortcut" and "Hold a key" keeps the recorded key.
     private var kind: Binding<GestureAction> {
         Binding(
-            get: { action.isShortcut ? Self.placeholder : action },
+            get: { action.kind },
             set: { new in
-                if new.isShortcut, action.isShortcut { return }
+                guard new != action.kind else { return }
+                if let key = action.recordedKey {
+                    switch new {
+                    case .shortcut: action = .shortcut(key); return
+                    case .holdKey: action = .holdKey(key); return
+                    default: break
+                    }
+                }
                 action = new
             }
         )
@@ -116,15 +133,17 @@ private struct GestureRow: View {
         VStack(alignment: .leading, spacing: 6) {
             Picker(trigger.title, selection: kind) {
                 ForEach(GestureAction.menuChoices, id: \.self) { choice in
-                    Text(choice.isShortcut ? "Keyboard shortcut" : choice.title).tag(choice)
+                    Text(choice.kindTitle).tag(choice)
                 }
             }
-            if case .shortcut(let shortcut) = action {
+            if let key = action.recordedKey {
                 HStack {
                     Spacer()
                     ShortcutRecorder(shortcut: Binding(
-                        get: { shortcut },
-                        set: { action = .shortcut($0) }
+                        get: { key },
+                        set: { newKey in
+                            if case .holdKey = action { action = .holdKey(newKey) } else { action = .shortcut(newKey) }
+                        }
                     ))
                 }
             }
@@ -140,7 +159,7 @@ struct ShortcutRecorder: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(shortcut.keyCode == 0 && shortcut.modifiers == 0 ? "Not set" : shortcut.display)
+            Text(shortcut == GestureAction.unsetKey ? "Not set" : shortcut.display)
                 .font(.system(.body, design: .monospaced))
                 .frame(minWidth: 80, alignment: .trailing)
                 .foregroundStyle(recording ? .orange : .primary)
@@ -151,8 +170,23 @@ struct ShortcutRecorder: View {
 
     private func start() {
         recording = true
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            // Modifier-only presses arrive as flagsChanged, not keyDown, so anything here is a real key.
+        // A modifier pressed and released on its own (say Right ⌘) records as that key alone, for
+        // push-to-talk. Any regular key press records as key plus held modifiers.
+        var lonelyModifier: UInt16?
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+            if event.type == .flagsChanged {
+                guard let modifier = InputController.modifier(for: event.keyCode) else { return nil }
+                let isDown = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                    .contains(Self.appKitFlag(for: modifier.flag))
+                if isDown {
+                    lonelyModifier = event.keyCode
+                } else if lonelyModifier == event.keyCode {
+                    shortcut = Shortcut(keyCode: event.keyCode, modifiers: 0)
+                    stop()
+                }
+                return nil
+            }
+            lonelyModifier = nil
             let mask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
             let flags = event.modifierFlags.intersection(mask)
             var cg: CGEventFlags = []
@@ -163,6 +197,16 @@ struct ShortcutRecorder: View {
             shortcut = Shortcut(keyCode: event.keyCode, modifiers: cg.rawValue)
             stop()
             return nil
+        }
+    }
+
+    private static func appKitFlag(for flag: CGEventFlags) -> NSEvent.ModifierFlags {
+        switch flag {
+        case .maskCommand: return .command
+        case .maskShift: return .shift
+        case .maskAlternate: return .option
+        case .maskControl: return .control
+        default: return .function
         }
     }
 

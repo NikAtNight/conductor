@@ -63,13 +63,15 @@ enum GestureAction: Codable, Equatable, Hashable {
     case zoom
     case shortcut(Shortcut)
     case pauseTracking
+    /// Holds a key down for as long as the trigger is held: push-to-talk.
+    case holdKey(Shortcut)
 
     enum Shape { case button, tap, motion, inert }
 
     var shape: Shape {
         switch self {
         case .none: return .inert
-        case .leftButton: return .button
+        case .leftButton, .holdKey: return .button
         case .rightClick, .middleClick, .shortcut, .pauseTracking: return .tap
         case .scroll, .zoom: return .motion
         }
@@ -85,17 +87,40 @@ enum GestureAction: Codable, Equatable, Hashable {
         case .zoom: return "Zoom"
         case .shortcut(let s): return "Shortcut \(s.display)"
         case .pauseTracking: return "Pause / resume"
+        case .holdKey(let s): return "Hold \(s.display)"
         }
     }
 
-    /// The pickable kinds. `shortcut` carries no key here; the UI fills it in with the recorder.
+    static let unsetKey = Shortcut(keyCode: 0, modifiers: 0)
+
+    /// The pickable kinds. Key actions carry no key here; the UI fills it in with the recorder.
     static let menuChoices: [GestureAction] = [
-        .leftButton, .rightClick, .middleClick, .scroll, .zoom, .shortcut(Shortcut(keyCode: 0, modifiers: 0)), .pauseTracking, .none,
+        .leftButton, .rightClick, .middleClick, .scroll, .zoom, .shortcut(unsetKey), .holdKey(unsetKey), .pauseTracking, .none,
     ]
 
-    var isShortcut: Bool {
-        if case .shortcut = self { return true }
-        return false
+    /// The key a shortcut or hold-key action carries.
+    var recordedKey: Shortcut? {
+        switch self {
+        case .shortcut(let s), .holdKey(let s): return s
+        default: return nil
+        }
+    }
+
+    /// The same action with its key blanked, so the picker can treat every shortcut as one choice.
+    var kind: GestureAction {
+        switch self {
+        case .shortcut: return .shortcut(Self.unsetKey)
+        case .holdKey: return .holdKey(Self.unsetKey)
+        default: return self
+        }
+    }
+
+    var kindTitle: String {
+        switch self {
+        case .shortcut: return "Keyboard shortcut"
+        case .holdKey: return "Hold a key"
+        default: return title
+        }
     }
 }
 
@@ -143,7 +168,8 @@ enum KeyNames {
         14: "E", 15: "R", 16: "Y", 17: "T", 18: "1", 19: "2", 20: "3", 21: "4", 22: "6", 23: "5", 24: "=", 25: "9",
         26: "7", 27: "-", 28: "8", 29: "0", 30: "]", 31: "O", 32: "U", 33: "[", 34: "I", 35: "P", 36: "↩", 37: "L",
         38: "J", 39: "'", 40: "K", 41: ";", 42: "\\", 43: ",", 44: "/", 45: "N", 46: "M", 47: ".", 48: "⇥", 49: "Space",
-        50: "`", 51: "⌫", 53: "⎋", 96: "F5", 97: "F6", 98: "F7", 99: "F3", 100: "F8", 101: "F9", 103: "F11",
+        50: "`", 51: "⌫", 53: "⎋", 54: "Right ⌘", 55: "Left ⌘", 56: "Left ⇧", 58: "Left ⌥", 59: "Left ⌃",
+        60: "Right ⇧", 61: "Right ⌥", 62: "Right ⌃", 63: "fn", 96: "F5", 97: "F6", 98: "F7", 99: "F3", 100: "F8", 101: "F9", 103: "F11",
         109: "F10", 111: "F12", 118: "F4", 120: "F2", 122: "F1", 123: "←", 124: "→", 125: "↓", 126: "↑",
         115: "Home", 119: "End", 116: "PgUp", 121: "PgDn", 117: "⌦",
     ]

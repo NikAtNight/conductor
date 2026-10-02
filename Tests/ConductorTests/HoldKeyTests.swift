@@ -1,0 +1,72 @@
+import XCTest
+@testable import Conductor
+
+final class HoldKeyTests: XCTestCase {
+    let rightCommand = Shortcut(keyCode: 54, modifiers: 0)
+    let dt = 1.0 / 30
+
+    private func recognizer() -> GestureRecognizer {
+        var map = GestureMap.standard
+        map[.ringPinch] = .holdKey(rightCommand)
+        return GestureRecognizer(map: map)
+    }
+
+    func testKeyIsHeldForExactlyAsLongAsThePinch() {
+        var r = recognizer()
+        XCTAssertEqual(r.update(hands: [PoseFixtures.pinched(.ringTip)], at: 0).actions, [.keyDown(rightCommand)])
+        for i in 1...10 {
+            XCTAssertEqual(r.update(hands: [PoseFixtures.pinched(.ringTip)], at: Double(i) * dt).actions, [])
+        }
+        XCTAssertEqual(r.update(hands: [PoseFixtures.openHand()], at: 11 * dt).actions, [.keyUp(rightCommand)])
+    }
+
+    func testLosingTheHandLetsGoOfTheKey() {
+        var r = recognizer()
+        _ = r.update(hands: [PoseFixtures.pinched(.ringTip)], at: 0)
+        var actions: [GestureRecognizer.Action] = []
+        for i in 1...6 { actions += r.update(hands: [], at: Double(i) * dt).actions }
+        XCTAssertEqual(actions, [.keyUp(rightCommand)])
+    }
+
+    func testSwitchingProfilesLetsGoOfTheKey() {
+        var r = recognizer()
+        _ = r.update(hands: [PoseFixtures.pinched(.ringTip)], at: 0)
+        XCTAssertEqual(r.replaceMap(.standard), [.keyUp(rightCommand)])
+    }
+
+    func testASwipeBoundToHoldKeyTapsIt() {
+        var map = GestureMap.standard
+        map[.swipeLeft] = .holdKey(rightCommand)
+        var r = GestureRecognizer(map: map)
+        var actions: [GestureRecognizer.Action] = []
+        for i in 0...6 {
+            let x = 0.35 + 0.25 * CGFloat(i) / 6
+            actions += r.update(hands: [PoseFixtures.twoFingers(at: CGPoint(x: x, y: 0.3))], at: Double(i) * dt).actions
+        }
+        XCTAssertEqual(actions, [.keyDown(rightCommand), .keyUp(rightCommand)])
+    }
+
+    func testRightCommandCarriesTheDeviceBitLocalFlowChecks() {
+        let down = InputController.flags(for: rightCommand, down: true)
+        XCTAssertTrue(down.contains(.maskCommand))
+        XCTAssertTrue(down.contains(CGEventFlags(rawValue: 0x10)), "NX_DEVICERCMDKEYMASK")
+        XCTAssertFalse(down.contains(CGEventFlags(rawValue: 0x08)), "not the left command bit")
+        XCTAssertTrue(InputController.flags(for: rightCommand, down: false).isEmpty)
+    }
+
+    func testRegularKeyKeepsItsModifiers() {
+        let optionSpace = Shortcut(keyCode: 49, modifiers: CGEventFlags.maskAlternate.rawValue)
+        XCTAssertEqual(InputController.flags(for: optionSpace, down: true), .maskAlternate)
+        XCTAssertNil(InputController.modifier(for: 49))
+    }
+
+    func testHoldKeyRoundTripsAndOldMapsStillLoad() throws {
+        let suite = try XCTUnwrap(UserDefaults(suiteName: "HoldKeyTests.\(UUID())"))
+        var map = GestureMap.standard
+        map[.ringPinch] = .holdKey(rightCommand)
+        map.save(to: suite)
+        XCTAssertEqual(GestureMap.load(from: suite)[.ringPinch], .holdKey(rightCommand))
+        XCTAssertEqual(GestureAction.holdKey(rightCommand).title, "Hold Right ⌘")
+        XCTAssertEqual(GestureAction.holdKey(rightCommand).kind, .holdKey(GestureAction.unsetKey))
+    }
+}

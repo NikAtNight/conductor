@@ -27,6 +27,9 @@ struct GestureRecognizer {
         case rightClick
         case middleClick
         case shortcut(Shortcut)
+        /// Press or release a held key (push-to-talk).
+        case keyDown(Shortcut)
+        case keyUp(Shortcut)
         /// Vertical palm travel since the last frame, normalized frame units. Positive is up.
         case scroll(dy: CGFloat)
         /// Spread change since the last frame, normalized frame units. Positive zooms in.
@@ -342,6 +345,7 @@ struct GestureRecognizer {
         case .rightClick: return [.rightClick]
         case .middleClick: return [.middleClick]
         case .shortcut(let s): return [.shortcut(s)]
+        case .holdKey(let s): return [.keyDown(s), .keyUp(s)]
         case .pauseTracking:
             isPaused = true
             events.append(.paused)
@@ -452,6 +456,7 @@ struct GestureRecognizer {
         case .rightClick: return [.rightClick]
         case .middleClick: return [.middleClick]
         case .shortcut(let s): return [.shortcut(s)]
+        case .holdKey(let s): return [.keyDown(s)]
         case .pauseTracking:
             isPaused = true
             pauseHeld = trigger
@@ -470,9 +475,15 @@ struct GestureRecognizer {
         dragOffset = .zero
         lastPalmY = nil
         lastSpread = nil
-        guard map[trigger] == .leftButton else { return [] }
-        lastLeftUpTime = asClick ? time : -1
-        return [.leftUp(clickCount: lastClickCount)]
+        switch map[trigger] {
+        case .leftButton:
+            lastLeftUpTime = asClick ? time : -1
+            return [.leftUp(clickCount: lastClickCount)]
+        case .holdKey(let s):
+            return [.keyUp(s)]
+        default:
+            return []
+        }
     }
 
     private mutating func motion(for trigger: Trigger, primary: HandPose, other: HandPose?) -> [Action] {
