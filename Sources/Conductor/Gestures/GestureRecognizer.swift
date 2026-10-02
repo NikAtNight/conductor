@@ -103,11 +103,12 @@ struct GestureRecognizer {
 
         var actions: [Action] = []
 
-        // Right click on the thumb/middle pinch edge. Suppressed while the index pinch is held
-        // because the middle finger drifts toward the thumb during a drag.
+        // Index and middle pinches look alike from the thumb's point of view, so whichever
+        // fingertip is closer to the thumb owns the gesture. Right click fires once, on the edge.
+        let indexDistance = primary.normalizedDistance(.thumbTip, .indexTip) ?? .infinity
         let middleDistance = primary.normalizedDistance(.thumbTip, .middleTip) ?? .infinity
         if !indexPinched {
-            if !middlePinched, middleDistance < config.pinchEngage {
+            if !middlePinched, middleDistance < config.pinchEngage, middleDistance < indexDistance {
                 middlePinched = true
                 actions.append(.rightClick)
             } else if middlePinched, middleDistance > config.pinchRelease {
@@ -115,8 +116,7 @@ struct GestureRecognizer {
             }
         }
 
-        let indexDistance = primary.normalizedDistance(.thumbTip, .indexTip) ?? .infinity
-        if !indexPinched, !middlePinched, indexDistance < config.pinchEngage {
+        if !indexPinched, !middlePinched, indexDistance < config.pinchEngage, indexDistance <= middleDistance {
             indexPinched = true
             let count = (time - lastLeftUpTime) < config.doubleClickInterval ? lastClickCount + 1 : 1
             lastClickCount = count

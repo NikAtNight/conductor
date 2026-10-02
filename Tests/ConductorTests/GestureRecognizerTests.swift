@@ -147,3 +147,23 @@ final class GestureRecognizerTests: XCTestCase {
         XCTAssertEqual(out.actions, [.leftDown(clickCount: 1)])
     }
 }
+
+final class PinchDisambiguationTests: XCTestCase {
+    /// Thumb lands between index and middle tips, nearer the middle one.
+    func testCloserFingerWinsWhenBothAreNear() {
+        var hand = PoseFixtures.openHand()
+        let index = hand[.indexTip]!, middle = hand[.middleTip]!
+        hand.joints[.thumbTip] = CGPoint(x: index.x * 0.4 + middle.x * 0.6, y: index.y * 0.4 + middle.y * 0.6)
+        // Both within engage range (gap between tips is 0.45 hand scales).
+        XCTAssertLessThan(hand.normalizedDistance(.thumbTip, .indexTip)!, 0.35)
+        XCTAssertLessThan(hand.normalizedDistance(.thumbTip, .middleTip)!, 0.35)
+        var r = GestureRecognizer()
+        XCTAssertEqual(r.update(hands: [hand], at: 0).actions, [.rightClick])
+    }
+
+    func testIndexPinchDoesNotAlsoRightClick() {
+        var r = GestureRecognizer()
+        let actions = r.update(hands: [PoseFixtures.pinched()], at: 0).actions
+        XCTAssertEqual(actions, [.leftDown(clickCount: 1)])
+    }
+}
