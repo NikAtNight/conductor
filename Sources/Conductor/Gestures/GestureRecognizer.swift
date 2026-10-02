@@ -145,6 +145,18 @@ struct GestureRecognizer {
         self.map = map
     }
 
+    /// Swaps the bindings without touching control or pause state (switching apps shouldn't make
+    /// you take control again). Anything held under the old bindings is let go first; the returned
+    /// actions release it.
+    mutating func replaceMap(_ newMap: GestureMap) -> [Action] {
+        guard newMap != map else { return [] }
+        let released = deactivate(at: -1, asClick: false)
+        pauseHeld = nil
+        resetSwipe()
+        map = newMap
+        return released
+    }
+
     /// Back to a clean start: no control, not paused, nothing held.
     mutating func reset() {
         self = GestureRecognizer(config: config, map: map)
@@ -200,6 +212,16 @@ struct GestureRecognizer {
     }
 
     private mutating func pausedUpdate(primary: HandPose, other: HandPose?, at time: TimeInterval) -> Output {
+        // Bindings changed (another app's profile, or an edit) and nothing can resume any more:
+        // resume now rather than leave the user stuck.
+        if !Trigger.allCases.contains(where: { map[$0] == .pauseTracking }) {
+            isPaused = false
+            hasControl = true
+            events.append(.resumed)
+            dwellRearm = true
+            mode = .point
+            return output(.point, pointer: nil, actions: [], label: "Resumed")
+        }
         // A swipe bound to pause can resume too.
         if Trigger.swipes.contains(where: { map[$0] == .pauseTracking }), primary.isTwoFingerPose {
             if let fired = detectSwipe(primary, at: time), map[fired] == .pauseTracking {

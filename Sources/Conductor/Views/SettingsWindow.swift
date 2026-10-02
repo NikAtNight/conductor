@@ -14,8 +14,8 @@ final class SettingsWindowController: NSWindowController {
         let all: [(String, String, AnyView, CGFloat)] = [
             ("Tracking", "hand.raised", AnyView(TrackingSettingsView(preferences: preferences, calibrate: calibrate)), 680),
             ("Displays", "display.2", AnyView(DisplaySettingsView(preferences: preferences)), 470),
-            ("Gestures", "hand.tap", AnyView(GestureSettingsView(preferences: preferences)), 560),
-            ("Hands", "hand.wave", AnyView(HandsSettingsView(preferences: preferences)), 560),
+            ("Gestures", "hand.tap", AnyView(GestureSettingsView(preferences: preferences)), 660),
+            ("Hands", "hand.wave", AnyView(HandsSettingsView(preferences: preferences)), 660),
             ("Camera", "web.camera", AnyView(CameraSettingsView(preferences: preferences)), 420),
         ]
         for (title, symbol, view, height) in all {

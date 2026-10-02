@@ -38,6 +38,9 @@ final class Engine: @unchecked Sendable {
     private var calibrationSamples: [CGPoint] = []
     private var onCalibrated: ((CGRect?) -> Void)?
 
+    /// Bundle ID of the frontmost app, for per-app gesture profiles. Main actor.
+    @MainActor var frontmostBundleID: String?
+
     @MainActor
     init(state: TrackingState, preferences: Preferences) {
         self.state = state
@@ -96,6 +99,8 @@ final class Engine: @unchecked Sendable {
     @MainActor
     func refreshFromMainActor(promptForAccessibility: Bool = false) {
         let snapshot = preferences.snapshot
+        let map = Preferences.effectiveMap(base: snapshot.gestureMap, profiles: snapshot.appProfiles,
+                                           frontmost: frontmostBundleID)
         let layout = DisplayLayout.current()
         let bounds = layout.map(\.bounds)
         let resolved = CameraPlacement.resolve(snapshot.cameraPlacement, displays: layout,
@@ -110,11 +115,8 @@ final class Engine: @unchecked Sendable {
             if let resolved { cameraMount = (resolved.x, resolved.display.bounds) }
             relayoutBox()
             accessibilityOK = trusted
-            if recognizer.map != snapshot.gestureMap {
-                // Rebinding mid-gesture could orphan a held button, so let go and start clean.
-                input.releaseAll()
-                recognizer = GestureRecognizer(config: recognizer.config, map: snapshot.gestureMap)
-            }
+            // Rebinding mid-gesture could orphan a held button; replaceMap lets go of it.
+            for action in recognizer.replaceMap(map) { perform(action) }
             filter = PointFilter(minCutoff: snapshot.smoothing, beta: Self.filterBeta)
             recognizer.config.pinchEngage = snapshot.pinchEngage
             recognizer.config.pinchRelease = snapshot.pinchRelease
@@ -122,6 +124,8 @@ final class Engine: @unchecked Sendable {
             recognizer.config.requireReadyPose = snapshot.requireReadyPose
             recognizer.config.dwellClick = snapshot.dwellClick
             recognizer.config.dwellTime = snapshot.dwellTime
+            recognizer.config.dwellRadius = CGFloat(snapshot.dwellRadius)
+            recognizer.config.pinchDeadZone = CGFloat(snapshot.pinchDeadZone)
             recognizer.config.mirrored = snapshot.mirrored
             relative.speed = CGFloat(snapshot.trackpadSpeed)
             relative.mirrored = snapshot.mirrored

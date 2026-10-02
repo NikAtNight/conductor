@@ -31,6 +31,15 @@ final class Preferences: ObservableObject {
     @Published var powerSaving: Bool { didSet { save() } }
     /// A box measured by calibration, in Vision space. Overrides the automatic layout when set.
     @Published var calibratedBox: CGRect? { didSet { save() } }
+    @Published var pinchDeadZone: Double { didSet { save() } }
+    @Published var dwellRadius: Double { didSet { save() } }
+    /// Per-app gesture maps, keyed by bundle identifier.
+    @Published var appProfiles: [String: AppProfile] { didSet { save() } }
+
+    /// The bindings to use while `bundleID` is the frontmost app.
+    nonisolated static func effectiveMap(base: GestureMap, profiles: [String: AppProfile], frontmost bundleID: String?) -> GestureMap {
+        bundleID.flatMap { profiles[$0]?.map } ?? base
+    }
 
     enum PointerMode: String, CaseIterable, Identifiable {
         /// The cursor sits wherever the hand is inside the control box.
@@ -80,6 +89,9 @@ final class Preferences: ObservableObject {
         var cameraDeviceID: String?
         var powerSaving: Bool
         var calibratedBox: CGRect?
+        var pinchDeadZone: Double
+        var dwellRadius: Double
+        var appProfiles: [String: AppProfile]
         var mainHand: GestureRecognizer.MainHand
         var requireReadyPose: Bool
         var dwellClick: Bool
@@ -93,6 +105,7 @@ final class Preferences: ObservableObject {
                  gestureMap: gestureMap, matchScreenShape: matchScreenShape, cameraPlacement: cameraPlacement,
                  pointerMode: pointerMode, trackpadSpeed: trackpadSpeed, momentumScroll: momentumScroll,
                  cameraDeviceID: cameraDeviceID, powerSaving: powerSaving, calibratedBox: calibratedBox,
+                 pinchDeadZone: pinchDeadZone, dwellRadius: dwellRadius, appProfiles: appProfiles,
                  mainHand: mainHand, requireReadyPose: requireReadyPose, dwellClick: dwellClick, dwellTime: dwellTime)
     }
 
@@ -134,6 +147,17 @@ final class Preferences: ObservableObject {
         } else {
             calibratedBox = nil
         }
+        pinchDeadZone = d("pinchDeadZone", 0.012)
+        dwellRadius = d("dwellRadius", 0.015)
+        appProfiles = defaults.data(forKey: "appProfiles")
+            .flatMap { try? JSONDecoder().decode([String: AppProfile].self, from: $0) } ?? [:]
+        // Profiles saved before newer triggers existed get those triggers' defaults.
+        for (id, var profile) in appProfiles {
+            for trigger in Trigger.allCases where profile.map.bindings[trigger] == nil {
+                profile.map.bindings[trigger] = GestureMap.standard[trigger]
+            }
+            appProfiles[id] = profile
+        }
         cameraPlacement = defaults.data(forKey: "cameraPlacement")
             .flatMap { try? JSONDecoder().decode(CameraPlacement.self, from: $0) }
     }
@@ -157,6 +181,8 @@ final class Preferences: ObservableObject {
         cameraDeviceID = nil
         powerSaving = true
         calibratedBox = nil
+        pinchDeadZone = 0.012
+        dwellRadius = 0.015
     }
 
     private func save() {
@@ -186,6 +212,11 @@ final class Preferences: ObservableObject {
             defaults.set([box.minX, box.minY, box.width, box.height].map(Double.init), forKey: "calibratedBox")
         } else {
             defaults.removeObject(forKey: "calibratedBox")
+        }
+        defaults.set(pinchDeadZone, forKey: "pinchDeadZone")
+        defaults.set(dwellRadius, forKey: "dwellRadius")
+        if let data = try? JSONEncoder().encode(appProfiles) {
+            defaults.set(data, forKey: "appProfiles")
         }
         if let cameraPlacement, let data = try? JSONEncoder().encode(cameraPlacement) {
             defaults.set(data, forKey: "cameraPlacement")

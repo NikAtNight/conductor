@@ -46,6 +46,18 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             .sink { [weak self] running in self?.updateIcon(running: running) }
             .store(in: &cancellables)
 
+        // Per-app profiles follow the frontmost app.
+        engine.frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didActivateApplicationNotification)
+            .compactMap { ($0.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier }
+            .sink { [weak self] bundleID in
+                guard let self, bundleID != Bundle.main.bundleIdentifier else { return }
+                self.engine.frontmostBundleID = bundleID
+                self.engine.refreshFromMainActor()
+            }
+            .store(in: &cancellables)
+
         if !UserDefaults.standard.bool(forKey: "setupComplete") {
             DispatchQueue.main.async { [weak self] in self?.showSetup() }
         }

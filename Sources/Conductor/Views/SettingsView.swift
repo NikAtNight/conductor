@@ -37,6 +37,8 @@ struct TrackingSettingsView: View {
                 SettingSlider(title: "Pinch engage", value: $preferences.pinchEngage, range: 0.15...0.6, format: "%.2f")
                 SettingSlider(title: "Pinch release", value: $preferences.pinchRelease, range: 0.3...0.9, format: "%.2f")
                 Caption("Thumb-to-index distance in hand widths. Release must stay above engage or clicks will chatter.")
+                SettingSlider(title: "Click dead zone", value: $preferences.pinchDeadZone, range: 0.005...0.05, format: "%.1f%%", scale: 100)
+                Caption("How far your hand can drift during a pinch before a click becomes a drag. Raise it if clicks keep turning into small drags.")
                 SettingSlider(title: "Scroll speed", value: $preferences.scrollGain, range: 0.2...3.0, format: "%.1fx")
                 Toggle("Keep scrolling after a flick", isOn: $preferences.momentumScroll)
             }

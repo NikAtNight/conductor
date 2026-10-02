@@ -5,6 +5,15 @@ struct HandsSettingsView: View {
 
     var body: some View {
         Form {
+            Section("Presets") {
+                HStack {
+                    ForEach(Preset.allCases) { preset in
+                        Button(preset.title) { preset.apply(to: preferences) }
+                            .help(preset.summary)
+                    }
+                }
+                Caption(Preset.allCases.map { "\($0.title): \($0.summary)" }.joined(separator: "\n"))
+            }
             Section("Main hand") {
                 Picker("Cursor follows", selection: $preferences.mainHand) {
                     ForEach(GestureRecognizer.MainHand.allCases) { Text($0.title).tag($0) }
@@ -18,6 +27,8 @@ struct HandsSettingsView: View {
             Section("Dwell click") {
                 Toggle("Click by holding the cursor still", isOn: $preferences.dwellClick)
                 SettingSlider(title: "Hold time", value: $preferences.dwellTime, range: 0.4...2.0, format: "%.1f s")
+                    .disabled(!preferences.dwellClick)
+                SettingSlider(title: "Wobble allowed", value: $preferences.dwellRadius, range: 0.005...0.05, format: "%.1f%%", scale: 100)
                     .disabled(!preferences.dwellClick)
                 Caption("For when pinching is hard or tiring. Hold the cursor still to click, then move away before the next click.")
             }
