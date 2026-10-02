@@ -58,12 +58,23 @@ final class GestureMapTests: XCTestCase {
         XCTAssertEqual(r.update(hands: [PoseFixtures.pinched(.middleTip)], at: 2 * dt).actions, [.rightClick])
     }
 
-    func testPauseActionEmitsOnce() {
+    func testPauseGestureSoftPausesAndTheSameGestureResumes() {
         var map = GestureMap.standard
         map[.littlePinch] = .pauseTracking
         var r = GestureRecognizer(map: map)
-        XCTAssertEqual(r.update(hands: [PoseFixtures.pinched(.littleTip)], at: 0).actions, [.pauseTracking])
-        XCTAssertTrue(r.update(hands: [PoseFixtures.pinched(.littleTip)], at: dt).actions.isEmpty)
+        let paused = r.update(hands: [PoseFixtures.pinched(.littleTip)], at: 0)
+        XCTAssertEqual(paused.events, [.paused])
+        XCTAssertTrue(paused.actions.isEmpty)
+        XCTAssertTrue(r.isPaused)
+        // Still holding the pause pinch, then an index pinch: nothing happens while paused.
+        XCTAssertTrue(r.update(hands: [PoseFixtures.pinched(.littleTip)], at: dt).events.isEmpty)
+        XCTAssertTrue(r.update(hands: [PoseFixtures.pinched()], at: 2 * dt).actions.isEmpty)
+        XCTAssertEqual(r.update(hands: [PoseFixtures.openHand()], at: 3 * dt).mode, .paused)
+        // Pinching the little finger again resumes, once.
+        XCTAssertEqual(r.update(hands: [PoseFixtures.pinched(.littleTip)], at: 4 * dt).events, [.resumed])
+        XCTAssertFalse(r.isPaused)
+        XCTAssertTrue(r.update(hands: [PoseFixtures.pinched(.littleTip)], at: 5 * dt).events.isEmpty, "held pinch doesn't re-pause")
+        XCTAssertEqual(r.update(hands: [PoseFixtures.openHand()], at: 6 * dt).mode, .point)
     }
 
     func testOneHandedZoomUsesVerticalTravel() {

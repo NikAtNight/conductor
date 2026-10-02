@@ -81,7 +81,7 @@ enum GestureAction: Codable, Equatable, Hashable {
         case .scroll: return "Scroll"
         case .zoom: return "Zoom"
         case .shortcut(let s): return "Shortcut \(s.display)"
-        case .pauseTracking: return "Pause tracking"
+        case .pauseTracking: return "Pause / resume"
         }
     }
 

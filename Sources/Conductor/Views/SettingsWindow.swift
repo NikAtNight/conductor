@@ -15,6 +15,7 @@ final class SettingsWindowController: NSWindowController {
             ("Tracking", "hand.raised", AnyView(TrackingSettingsView(preferences: preferences)), 600),
             ("Displays", "display.2", AnyView(DisplaySettingsView(preferences: preferences)), 470),
             ("Gestures", "hand.tap", AnyView(GestureSettingsView(preferences: preferences)), 560),
+            ("Hands", "hand.wave", AnyView(HandsSettingsView(preferences: preferences)), 560),
         ]
         all += extra
         for (title, symbol, view, height) in all {

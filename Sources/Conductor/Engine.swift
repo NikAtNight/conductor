@@ -24,7 +24,6 @@ final class Engine: @unchecked Sendable {
     private var cameraMount: (x: CGFloat, display: CGRect) = (0, .zero)
     private var box = CGRect(x: 0.2, y: 0.2, width: 0.6, height: 0.5)
     private var wasIdle = true
-    private var onPause: (() -> Void)?
     private var accessibilityOK = false
     private var zoomAccumulator: CGFloat = 0
     private var lastPosted = CGPoint(x: -1, y: -1)
@@ -52,6 +51,7 @@ final class Engine: @unchecked Sendable {
         refreshFromMainActor(promptForAccessibility: true)
         state.error = accessibilityOK ? nil
             : "Accessibility not granted. Cursor won't move until you allow Conductor in System Settings."
+        camera.queue.async { [self] in recognizer.reset() }
         camera.start()
         state.isRunning = true
         // The grant can be flipped in System Settings while we run, and AXIsProcessTrusted picks it
@@ -91,7 +91,6 @@ final class Engine: @unchecked Sendable {
         let resolved = CameraPlacement.resolve(snapshot.cameraPlacement, displays: layout,
                                                builtInCamera: CameraCapture.preferredDeviceIsBuiltIn)
         let trusted = Permissions.accessibilityGranted(prompt: promptForAccessibility)
-        onPause = { [weak self] in self?.stop() }
         camera.queue.async { [self] in
             prefs = snapshot
             displays = bounds
@@ -107,6 +106,10 @@ final class Engine: @unchecked Sendable {
             filter = PointFilter(minCutoff: snapshot.smoothing, beta: Self.filterBeta)
             recognizer.config.pinchEngage = snapshot.pinchEngage
             recognizer.config.pinchRelease = snapshot.pinchRelease
+            recognizer.config.mainHand = snapshot.mainHand
+            recognizer.config.requireReadyPose = snapshot.requireReadyPose
+            recognizer.config.dwellClick = snapshot.dwellClick
+            recognizer.config.dwellTime = snapshot.dwellTime
         }
     }
 
@@ -200,9 +203,6 @@ final class Engine: @unchecked Sendable {
         case .rightClick: input.rightClick()
         case .middleClick: input.middleClick()
         case .shortcut(let s): input.keyPress(CGKeyCode(s.keyCode), flags: s.flags)
-        case .pauseTracking:
-            // Pausing stops the camera, which must happen on the main actor.
-            if let onPause { Task { @MainActor in onPause() } }
         case .scroll(let dy):
             // Natural scrolling: hand up means content moves up, which is a negative wheel delta.
             let pixels = -dy * Self.scrollPixelsPerFrame * CGFloat(prefs.scrollGain)

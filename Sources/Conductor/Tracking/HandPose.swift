@@ -17,7 +17,7 @@ enum Chirality {
 
 /// One detected hand. Points are normalized to the camera frame with Vision's convention:
 /// origin bottom-left, x right, y up. Nothing here is mirrored yet; that happens in ScreenMapper.
-struct HandPose {
+struct HandPose: Equatable {
     var joints: [HandJoint: CGPoint]
     var confidence: [HandJoint: Float]
     var chirality: Chirality
@@ -51,6 +51,23 @@ struct HandPose {
         guard points.count == keys.count else { return nil }
         let sum = points.reduce(CGPoint.zero) { CGPoint(x: $0.x + $1.x, y: $0.y + $1.y) }
         return CGPoint(x: sum.x / CGFloat(points.count), y: sum.y / CGFloat(points.count))
+    }
+
+    /// True when all four fingers are straight and the thumb is out and away from the index finger.
+    /// This is the "ready" pose: a flat, open hand. A curled typing hand or a pinch never matches.
+    var isOpenHand: Bool {
+        guard let wrist = self[.wrist] else { return false }
+        let fingers: [(tip: HandJoint, pip: HandJoint)] = [
+            (.indexTip, .indexPIP), (.middleTip, .middlePIP), (.ringTip, .ringPIP), (.littleTip, .littlePIP),
+        ]
+        for finger in fingers {
+            guard let tip = self[finger.tip], let pip = self[finger.pip] else { return false }
+            // A straight finger reaches clearly past its middle knuckle.
+            if tip.distance(to: wrist) < pip.distance(to: wrist) * 1.1 { return false }
+        }
+        guard let thumbOut = normalizedDistance(.thumbTip, .indexMCP),
+              let thumbToIndex = normalizedDistance(.thumbTip, .indexTip) else { return false }
+        return thumbOut > 0.5 && thumbToIndex > 0.6
     }
 
     /// True when index, middle, ring and little fingertips are all closer to the wrist than

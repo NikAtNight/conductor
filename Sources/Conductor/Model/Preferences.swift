@@ -16,6 +16,10 @@ final class Preferences: ObservableObject {
     @Published var displayMode: DisplayMode { didSet { save() } }
     @Published var gestureMap: GestureMap { didSet { gestureMap.save(to: defaults) } }
     @Published var matchScreenShape: Bool { didSet { save() } }
+    @Published var mainHand: GestureRecognizer.MainHand { didSet { save() } }
+    @Published var requireReadyPose: Bool { didSet { save() } }
+    @Published var dwellClick: Bool { didSet { save() } }
+    @Published var dwellTime: Double { didSet { save() } }
     /// Nil means automatic: see CameraPlacement.resolve.
     @Published var cameraPlacement: CameraPlacement? { didSet { save() } }
 
@@ -50,13 +54,18 @@ final class Preferences: ObservableObject {
         var gestureMap: GestureMap
         var matchScreenShape: Bool
         var cameraPlacement: CameraPlacement?
+        var mainHand: GestureRecognizer.MainHand
+        var requireReadyPose: Bool
+        var dwellClick: Bool
+        var dwellTime: Double
     }
 
     var snapshot: Snapshot {
         Snapshot(boxWidth: boxWidth, boxHeight: boxHeight, boxOffsetY: boxOffsetY, mirrored: mirrored,
                  smoothing: smoothing, pinchEngage: pinchEngage, pinchRelease: pinchRelease,
                  scrollGain: scrollGain, zoomWithKeys: zoomWithKeys, displayMode: displayMode,
-                 gestureMap: gestureMap, matchScreenShape: matchScreenShape, cameraPlacement: cameraPlacement)
+                 gestureMap: gestureMap, matchScreenShape: matchScreenShape, cameraPlacement: cameraPlacement,
+                 mainHand: mainHand, requireReadyPose: requireReadyPose, dwellClick: dwellClick, dwellTime: dwellTime)
     }
 
     private let defaults: UserDefaults
@@ -81,6 +90,10 @@ final class Preferences: ObservableObject {
         displayMode = DisplayMode(rawValue: defaults.string(forKey: "displayMode") ?? "") ?? .all
         gestureMap = GestureMap.load(from: defaults)
         matchScreenShape = b("matchScreenShape", true)
+        mainHand = GestureRecognizer.MainHand(rawValue: defaults.string(forKey: "mainHand") ?? "") ?? .right
+        requireReadyPose = b("requireReadyPose", true)
+        dwellClick = b("dwellClick", false)
+        dwellTime = d("dwellTime", 0.8)
         cameraPlacement = defaults.data(forKey: "cameraPlacement")
             .flatMap { try? JSONDecoder().decode(CameraPlacement.self, from: $0) }
     }
@@ -92,6 +105,10 @@ final class Preferences: ObservableObject {
         gestureMap = .standard
         matchScreenShape = true
         cameraPlacement = nil
+        mainHand = .right
+        requireReadyPose = true
+        dwellClick = false
+        dwellTime = 0.8
     }
 
     private func save() {
@@ -106,6 +123,10 @@ final class Preferences: ObservableObject {
         defaults.set(zoomWithKeys, forKey: "zoomWithKeys")
         defaults.set(displayMode.rawValue, forKey: "displayMode")
         defaults.set(matchScreenShape, forKey: "matchScreenShape")
+        defaults.set(mainHand.rawValue, forKey: "mainHand")
+        defaults.set(requireReadyPose, forKey: "requireReadyPose")
+        defaults.set(dwellClick, forKey: "dwellClick")
+        defaults.set(dwellTime, forKey: "dwellTime")
         if let cameraPlacement, let data = try? JSONEncoder().encode(cameraPlacement) {
             defaults.set(data, forKey: "cameraPlacement")
         } else {
