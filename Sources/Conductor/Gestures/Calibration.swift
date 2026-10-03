@@ -9,11 +9,10 @@ enum Calibration {
     static let minimumWidth: CGFloat = 0.12
     static let minimumHeight: CGFloat = 0.1
 
-    /// Box in Vision space (bottom-left origin, un-mirrored) from pointer samples in that space.
-    /// Uses the 3rd to 97th percentile on each axis so a few stray frames can't stretch the box,
-    /// then pulls each edge in slightly so the screen edges are reachable without straining.
-    static func box(from points: [CGPoint]) -> CGRect? {
-        guard points.count >= minimumSamples else { return nil }
+    /// The area the samples cover, from the 3rd to the 97th percentile on each axis so a few stray
+    /// frames can't stretch it. Same space as the samples. Shown live while calibrating.
+    static func extent(of points: [CGPoint]) -> CGRect? {
+        guard !points.isEmpty else { return nil }
         let xs = points.map(\.x).sorted()
         let ys = points.map(\.y).sorted()
         func percentile(_ values: [CGFloat], _ q: Double) -> CGFloat {
@@ -21,8 +20,16 @@ enum Calibration {
         }
         let minX = percentile(xs, 0.03), maxX = percentile(xs, 0.97)
         let minY = percentile(ys, 0.03), maxY = percentile(ys, 0.97)
-        guard maxX - minX >= minimumWidth, maxY - minY >= minimumHeight else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
+    /// Box in Vision space (bottom-left origin, un-mirrored) from pointer samples in that space:
+    /// the traced extent, with each edge pulled in slightly so the screen edges are reachable
+    /// without straining.
+    static func box(from points: [CGPoint]) -> CGRect? {
+        guard points.count >= minimumSamples, let traced = extent(of: points),
+              traced.width >= minimumWidth, traced.height >= minimumHeight else { return nil }
         let inset: CGFloat = 0.01
-        return CGRect(x: minX + inset, y: minY + inset, width: maxX - minX - 2 * inset, height: maxY - minY - 2 * inset)
+        return traced.insetBy(dx: inset, dy: inset)
     }
 }

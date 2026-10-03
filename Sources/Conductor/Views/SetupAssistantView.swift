@@ -73,7 +73,7 @@ struct SetupAssistantView: View {
                         }
                     }
                     step(5, "Calibrate your reach and speed", done: preferences.calibratedBox != nil) {
-                        Text("Sit as you normally do. Press Calibrate, then trace the edge of the area you can reach comfortably for six seconds. Optional; skip it to use the automatic box.")
+                        Text("Sit as you normally do. Press Calibrate, then move your whole hand around the edge of the area you can reach comfortably for six seconds. Optional; skip it to use the automatic box.")
                         HStack {
                             Button("Calibrate", action: calibrate)
                                 .disabled(cameraStatus != .authorized || isCalibrating)
@@ -141,7 +141,7 @@ struct SetupAssistantView: View {
         case .none: return preferences.calibratedBox == nil ? "" : "Calibrated."
         case .running(let seconds): return "Trace your reach… \(seconds)s"
         case .finished: return "Calibrated."
-        case .failed: return "Didn't see enough movement. Try again with bigger moves."
+        case .failed: return "Saw too small an area. Try again moving your whole hand, not just your fingers."
         }
     }
 

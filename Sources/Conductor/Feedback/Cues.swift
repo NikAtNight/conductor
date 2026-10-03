@@ -2,7 +2,7 @@ import AppKit
 import Combine
 
 /// Optional sounds, and VoiceOver announcements whenever VoiceOver is running, for the moments a
-/// user can't see: taking or giving back control, pausing, and clicks.
+/// user can't see: taking or giving back control, pausing, switching scroll mode, and clicks.
 @MainActor
 final class Cues {
     private var cancellables: Set<AnyCancellable> = []
@@ -28,6 +28,8 @@ final class Cues {
             case .releasedControl: return ("Bottle", "Conductor released control")
             case .paused: return ("Purr", "Conductor paused")
             case .resumed: return ("Pop", "Conductor resumed")
+            case .scrollModeOn: return ("Morse", "Scroll mode")
+            case .scrollModeOff: return ("Pop", "Pointer mode")
             }
         }()
         if sounds { play(sound) }

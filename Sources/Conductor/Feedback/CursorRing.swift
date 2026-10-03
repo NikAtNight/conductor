@@ -4,13 +4,16 @@ import QuartzCore
 
 /// A small ring that follows the cursor and shows what Conductor is about to do:
 /// cyan fills as a pinch closes, orange as a dwell click counts down, green while the ready pose
-/// is held. It flashes when a click lands. The window ignores the mouse, so it never gets in the way.
+/// is held. It flashes when a click lands. In scroll mode it stays up in purple, with an arrow for
+/// the way the page is scrolling. The window ignores the mouse, so it never gets in the way.
 @MainActor
 final class CursorRing {
     private let window: NSPanel
     private let track = CAShapeLayer()
     private let arc = CAShapeLayer()
     private let flash = CAShapeLayer()
+    private let arrow = CAShapeLayer()
+    private var arrowDirection: Int?
     private var cancellables: Set<AnyCancellable> = []
 
     private static let size: CGFloat = 56
@@ -49,6 +52,12 @@ final class CursorRing {
         view.layer?.addSublayer(track)
         view.layer?.addSublayer(flash)
         view.layer?.addSublayer(arc)
+        arrow.fillColor = nil
+        arrow.lineWidth = 3
+        arrow.lineCap = .round
+        arrow.lineJoin = .round
+        arrow.strokeColor = Self.scrollColor.cgColor
+        view.layer?.addSublayer(arrow)
         window.contentView = view
 
         state.$feedback
@@ -64,11 +73,12 @@ final class CursorRing {
 
     private func update(feedback: GestureRecognizer.Feedback, mode: GestureRecognizer.Mode, visible: Bool) {
         let (progress, color): (CGFloat, NSColor) = {
+            if mode == .scrollMode { return (1, Self.scrollColor) }
             if mode == .waiting { return (feedback.ready, .systemGreen) }
             if feedback.dwell > 0.02 { return (feedback.dwell, .systemOrange) }
             return (feedback.pinch, NSColor(calibratedRed: 0.36, green: 0.78, blue: 0.98, alpha: 1))
         }()
-        let show = visible && (progress > 0.03 || mode == .drag)
+        let show = visible && (progress > 0.03 || mode == .drag || mode == .scrollMode)
         guard show else {
             if window.isVisible { window.orderOut(nil) }
             return
@@ -77,9 +87,34 @@ final class CursorRing {
         CATransaction.setDisableActions(true)
         arc.strokeColor = color.cgColor
         arc.strokeEnd = mode == .drag ? 1 : progress
+        setArrow(mode == .scrollMode ? feedback.scrollDirection : nil)
         CATransaction.commit()
         moveToCursor()
         if !window.isVisible { window.orderFrontRegardless() }
+    }
+
+    private static let scrollColor = NSColor.systemPurple
+
+    /// A chevron pointing the way the page scrolls, a short bar at rest, or nothing outside scroll mode.
+    private func setArrow(_ direction: Int?) {
+        guard direction != arrowDirection else { return }
+        arrowDirection = direction
+        let c = Self.size / 2
+        let path = CGMutablePath()
+        switch direction {
+        case .some(0):
+            path.move(to: CGPoint(x: c - 6, y: c))
+            path.addLine(to: CGPoint(x: c + 6, y: c))
+        case .some(let d):
+            // AppKit y grows upward, so scrolling down the page (1) points the tip down.
+            let tip = CGFloat(-d) * 5
+            path.move(to: CGPoint(x: c - 7, y: c - tip))
+            path.addLine(to: CGPoint(x: c, y: c + tip))
+            path.addLine(to: CGPoint(x: c + 7, y: c - tip))
+        case .none:
+            break
+        }
+        arrow.path = path
     }
 
     private func moveToCursor() {

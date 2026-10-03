@@ -33,7 +33,7 @@ struct GestureSettingsView: View {
                 }
                 Caption(editing == nil
                     ? "These bindings apply everywhere, except in apps with their own profile."
-                    : "These bindings apply while this app is in front. Everything else uses Everywhere. Pause / resume is shared by every profile, so set it under Everywhere.")
+                    : "These bindings apply while this app is in front. Everything else uses Everywhere. Pause / resume and scroll mode are shared by every profile, so set them under Everywhere.")
             }
             Section("Bindings") {
                 ForEach(Trigger.allCases) { trigger in
@@ -51,6 +51,14 @@ struct GestureSettingsView: View {
                     }
                 }
                 Caption("Holds Right ⌘, LocalFlow's dictation key, for as long as you pinch. Any push-to-talk app works the same way: pick Hold a key for a gesture and record that app's key. Pressing a modifier on its own records just that key.")
+            }
+            Section("Scroll mode") {
+                HStack {
+                    Text("Cross index and middle fingers to switch scroll mode on and off")
+                    Spacer()
+                    Button("Set up") { preferences.gestureMap[.crossedFingers] = .scrollMode }
+                }
+                Caption("For scrolling with a relaxed, open hand instead of a fist. Cross your fingers for a moment, uncross them, and rest your hand where it's comfortable: that spot becomes neutral. Knuckles above neutral scroll down the page, below it scroll up, and the farther from neutral, the faster. Tipping your fingers toward the screen lowers the knuckles, so rest with your hand tipped forward a little and you can scroll both ways by rocking at the wrist. Clicks, other gestures, and pause are off until you cross your fingers again. The cursor ring turns purple and shows an arrow while scroll mode is on.")
             }
             Section {
                 Caption("Only one trigger is active at a time. Both hands beat a fist, a fist beats a pinch, and among pinches the fingertip closest to the thumb wins. Scroll and zoom on a one-handed trigger use up and down hand travel. With index and middle fingers raised and the others curled, the cursor holds still: moving the hand up or down drives that pose's binding (scroll by default), and a quick sideways flick swipes.")

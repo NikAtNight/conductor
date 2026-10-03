@@ -9,6 +9,10 @@ import Foundation
 /// - waiting: with the ready pose required, nothing moves until an open hand is held still.
 /// - in control: gestures and the pointer work. Losing the hand for `releaseAfter` hands control back.
 /// - paused: a trigger bound to "Pause / resume" stops all input; the same trigger resumes.
+/// - scroll mode: a trigger bound to "Scroll mode on / off" turns the relaxed hand into a scroll
+///   lever. Where the hand settles becomes neutral; knuckles above it scroll down the page, below
+///   it scroll up, faster the farther they go. Finger shapes do nothing until the same trigger
+///   switches back.
 struct GestureRecognizer {
     enum Mode: String {
         case idle = "No hand"
@@ -19,6 +23,7 @@ struct GestureRecognizer {
         case scroll = "Scroll"
         case zoom = "Zoom"
         case swipe = "Two fingers: swipe left or right"
+        case scrollMode = "Scroll mode"
     }
 
     enum Action: Equatable {
@@ -42,6 +47,8 @@ struct GestureRecognizer {
         case releasedControl
         case paused
         case resumed
+        case scrollModeOn
+        case scrollModeOff
     }
 
     /// Progress values for the cursor ring, each 0...1.
@@ -52,6 +59,8 @@ struct GestureRecognizer {
         var dwell: CGFloat = 0
         /// How far along the ready pose is.
         var ready: CGFloat = 0
+        /// In scroll mode: 1 scrolling down the page, -1 up, 0 at rest.
+        var scrollDirection = 0
     }
 
     struct Output {
@@ -113,6 +122,24 @@ struct GestureRecognizer {
         /// A pinch can't start while its finger looks shorter than this, in palm widths. Aimed at
         /// the lens, the camera can't tell whether the fingertip touches the thumb.
         var minimumFingerLength: CGFloat = 0.5
+        /// Index and middle count as crossed past this (see HandPose.fingerCross), and uncrossed
+        /// below `crossRelease`. With these and `crossHold`, replaying every recorded gesture log
+        /// (scroll demos, rocking the whole hand) never switches by accident.
+        var crossEngage: CGFloat = 0.2
+        var crossRelease: CGFloat = 0.1
+        /// Seconds the fingers must stay crossed, so a hand passing through the shape doesn't fire.
+        var crossHold: TimeInterval = 0.3
+        /// Scroll mode: after the switch gesture is let go, the hand has this long to settle, and
+        /// where it is then becomes neutral. Uncrossing the fingers can't scroll.
+        var neutralSettle: TimeInterval = 0.3
+        /// Knuckle travel from neutral, in frame units, that scrolls nothing. A resting hand wobbles
+        /// about 0.001; a relaxed wrist rock covers about 0.1. Tipping the fingers toward or away
+        /// from the camera both lower the knuckles in the picture, so a rock scrolls both ways only
+        /// from a neutral that is already tipped forward a little.
+        var scrollDeadZone: CGFloat = 0.02
+        /// Scroll speed per unit of knuckle offset past the dead zone, as frame units of travel per
+        /// second. At 4, an offset 0.05 past the dead zone scrolls 800 px/s at the default speed.
+        var scrollRate: CGFloat = 4
     }
 
     var config: Config
@@ -156,6 +183,16 @@ struct GestureRecognizer {
     private var unposedFrames = 0
     /// The pinch that's closed this frame and when it closed, whether or not it engaged.
     private var pinchSince: (trigger: Trigger, time: TimeInterval)?
+    /// Index and middle crossed this frame (with hysteresis), and since when.
+    private var crossed = false
+    private var crossedSince: TimeInterval?
+    private(set) var inScrollMode = false
+    /// In scroll mode: the trigger that switched in, still held. It must be let go and made again
+    /// to switch back, like the pause trigger.
+    private var switchHeld: Trigger?
+    /// The resting knuckle height scroll mode measures from. It follows the hand until `lockedAt`.
+    private var neutral: (y: CGFloat, lockedAt: TimeInterval)?
+    private var lastScrollTime: TimeInterval?
     /// Consecutive frames needed to start or end the two-finger pose.
     static let poseFrames = 3
 
@@ -172,6 +209,7 @@ struct GestureRecognizer {
         let released = deactivate(at: -1, asClick: false)
         // A pause pinch still held across the swap keeps blocking resume, as long as it still pauses.
         if let held = pauseHeld, newMap[held] != .pauseTracking { pauseHeld = nil }
+        if let held = switchHeld, newMap[held] != .scrollMode { switchHeld = nil }
         resetSwipe()
         map = newMap
         return released
@@ -189,8 +227,11 @@ struct GestureRecognizer {
         // Time kept passing during the stall; a dwell measured across it would click at once.
         dwellAnchor = nil
         dwellRearm = true
-        // A trigger that is pausing, or just resumed, stays accounted for so the stall can't flip it.
-        if let held = active, map[held] == .pauseTracking { return [] }
+        // The hand may have moved during the stall; settle a new neutral.
+        neutral = nil
+        // A trigger that is pausing or switching scroll mode, or just did, stays accounted for so the
+        // stall can't flip it.
+        if let held = active, map[held] == .pauseTracking || map[held] == .scrollMode { return [] }
         return deactivate(at: -1, asClick: false)
     }
 
@@ -202,6 +243,9 @@ struct GestureRecognizer {
                 hasControl = false
                 events.append(.releasedControl)
             }
+            // Gone long enough to give back control: back to pointing too, so the hand doesn't
+            // return to a mode it forgot about.
+            if inScrollMode, time - lastSeen > config.releaseAfter { leaveScrollMode() }
             if lostFrames < config.lostFrameTolerance, mode != .idle {
                 // Brief dropout: hold state and the current button so a drag survives a flicker.
                 return output(mode, pointer: nil, actions: [], label: label(for: mode))
@@ -211,6 +255,7 @@ struct GestureRecognizer {
         lostFrames = 0
         lastSeen = time
         trackPinch(primary, at: time)
+        trackCrossed(primary, at: time)
         trackTwoFingerPose(primary)
 
         let other = hands.count >= 2
@@ -222,6 +267,9 @@ struct GestureRecognizer {
         }
         if config.requireReadyPose, !hasControl {
             return waitingUpdate(primary: primary, at: time)
+        }
+        if inScrollMode {
+            return scrollModeUpdate(primary: primary, other: other, at: time)
         }
         return controlUpdate(primary: primary, other: other, at: time)
     }
@@ -318,6 +366,7 @@ struct GestureRecognizer {
                 mode = .paused
                 return output(.paused, pointer: nil, actions: actions, label: "Paused: \(next.title) to resume")
             }
+            if inScrollMode { return scrollModeEntered(actions: actions) }
         }
 
         // Motion deltas start the frame after activation, when there is a previous sample.
@@ -329,7 +378,7 @@ struct GestureRecognizer {
         let pointer = pointerOutput(primary: primary, action: action)
         var feedback = Feedback(pinch: pinchFeedback(primary))
 
-        if config.dwellClick, active == nil, let live = primary.pointer {
+        if config.dwellClick, active == nil, !crossIsForming, let live = primary.pointer {
             let (dwellActions, progress) = dwell(at: live, time: time)
             actions += dwellActions
             feedback.dwell = progress
@@ -359,6 +408,7 @@ struct GestureRecognizer {
                 mode = .paused
                 return output(.paused, pointer: nil, actions: actions, label: "Paused: \(Trigger.twoFingers.title) to resume")
             }
+            if inScrollMode { return scrollModeEntered(actions: actions) }
         }
         if posed, let swipe = detectSwipe(primary, at: time) {
             actions += tapActions(for: swipe)
@@ -367,6 +417,10 @@ struct GestureRecognizer {
                 actions += deactivate(at: time, asClick: false)
                 mode = .paused
                 return output(.paused, pointer: nil, actions: actions, label: "Paused: \(swipe.title) to resume")
+            }
+            if inScrollMode {
+                actions += deactivate(at: time, asClick: false)
+                return scrollModeEntered(actions: actions)
             }
             mode = .swipe
             return output(.swipe, pointer: nil, actions: actions, label: swipe.title)
@@ -381,6 +435,94 @@ struct GestureRecognizer {
         let action = map[.twoFingers]
         mode = Self.mode(for: action)
         return output(mode, pointer: nil, actions: actions, label: "\(Trigger.twoFingers.title): \(action.title)")
+    }
+
+    // MARK: Scroll mode
+
+    /// The relaxed hand is a lever: knuckles above neutral scroll down the page, below it scroll
+    /// up, faster the farther they go. Only the switch trigger is watched; every other shape the
+    /// fingers make while rocking does nothing.
+    private mutating func scrollModeUpdate(primary: HandPose, other: HandPose?, at time: TimeInterval) -> Output {
+        mode = .scrollMode
+        dwellAnchor = nil
+        dwellRearm = true
+        var actions = deactivate(at: -1, asClick: false)
+        let switches = Trigger.allCases.filter { map[$0] == .scrollMode }
+        // Bindings changed (another app's profile, or an edit) and nothing can switch back: switch
+        // back now rather than leave the user stuck.
+        guard !switches.isEmpty else { return scrollModeLeft(actions: actions) }
+        if Trigger.swipes.contains(where: { map[$0] == .scrollMode }), primary.isTwoFingerPose {
+            if let fired = detectSwipe(primary, at: time), map[fired] == .scrollMode {
+                return scrollModeLeft(actions: actions)
+            }
+        } else {
+            resetSwipe()
+        }
+        var forming = false
+        if let held = switchHeld {
+            if !isEngaged(held, primary: primary, other: other, holding: true) {
+                switchHeld = nil
+                neutral = nil
+            }
+        } else if let trigger = switches.first(where: { isEngaged($0, primary: primary, other: other, holding: false) }) {
+            if heldLongEnough(trigger, at: time) {
+                // Treat the trigger as held so it doesn't switch straight back until released.
+                active = trigger
+                return scrollModeLeft(actions: actions)
+            }
+            // Making the switch gesture shouldn't scroll.
+            forming = true
+        }
+        guard switchHeld == nil, !forming, let knuckles = primary.knuckleCenter else {
+            lastScrollTime = nil
+            return output(.scrollMode, pointer: nil, actions: actions, label: "Scroll mode: let go, then rest your hand")
+        }
+        if neutral == nil { neutral = (knuckles.y, time + config.neutralSettle) }
+        if let settling = neutral, time < settling.lockedAt {
+            neutral = (knuckles.y, settling.lockedAt)
+            lastScrollTime = nil
+            return output(.scrollMode, pointer: nil, actions: actions, label: "Scroll mode: rest your hand")
+        }
+        let offset = knuckles.y - (neutral?.y ?? knuckles.y)
+        let excess = max(0, abs(offset) - config.scrollDeadZone)
+        let direction = excess > 0 ? (offset > 0 ? 1 : -1) : 0
+        // Capped like ScrollPolicy, so a dropped frame can't become one giant step.
+        let dt = lastScrollTime.map { min(time - $0, 0.1) } ?? 0
+        lastScrollTime = time
+        // Positive travel is the hand going up, which ScrollPolicy turns into scrolling down the page.
+        actions.append(.scroll(dy: CGFloat(direction) * excess * config.scrollRate * CGFloat(dt)))
+        let label = ["Scroll mode: scrolling up", "Scroll mode: at rest", "Scroll mode: scrolling down"][direction + 1]
+        return output(.scrollMode, pointer: nil, actions: actions, label: label,
+                      feedback: Feedback(scrollDirection: direction))
+    }
+
+    private mutating func enterScrollMode(heldBy trigger: Trigger?) {
+        inScrollMode = true
+        switchHeld = trigger
+        neutral = nil
+        lastScrollTime = nil
+        events.append(.scrollModeOn)
+    }
+
+    private mutating func leaveScrollMode() {
+        guard inScrollMode else { return }
+        inScrollMode = false
+        switchHeld = nil
+        neutral = nil
+        events.append(.scrollModeOff)
+    }
+
+    /// The output for the frame a trigger switched into scroll mode.
+    private mutating func scrollModeEntered(actions: [Action]) -> Output {
+        mode = .scrollMode
+        return output(.scrollMode, pointer: nil, actions: actions, label: "Scroll mode: let go, then rest your hand")
+    }
+
+    private mutating func scrollModeLeft(actions: [Action]) -> Output {
+        leaveScrollMode()
+        dwellRearm = true
+        mode = .point
+        return output(.point, pointer: nil, actions: actions, label: "Pointer")
     }
 
     // MARK: Swipes
@@ -414,6 +556,9 @@ struct GestureRecognizer {
         case .pauseTracking:
             isPaused = true
             events.append(.paused)
+            return []
+        case .scrollMode:
+            enterScrollMode(heldBy: nil)
             return []
         case .scroll, .zoom, .none: return []
         }
@@ -483,6 +628,8 @@ struct GestureRecognizer {
             return false
         case .twoFingers:
             return twoFingersHeld
+        case .crossedFingers:
+            return crossed
         case .indexPinch, .middlePinch, .ringPinch, .littlePinch:
             // Only starting a pinch needs a clear view of the finger. A held one stays held.
             return pinchDistance(primary, trigger.fingertip!) < threshold
@@ -496,6 +643,11 @@ struct GestureRecognizer {
             return .twoHandPinch
         }
         if active == .twoHandPinch { return nil } // hold until it releases on its own
+        if bound(.crossedFingers), crossed {
+            // Still forming: nothing else starts, so crossing can't click or scroll on the way.
+            return heldLongEnough(.crossedFingers, at: time) ? .crossedFingers : nil
+        }
+        if active == .crossedFingers { return nil }
         if bound(.fist), primary.isFist { return .fist }
         if active == .fist { return nil }
         if active != nil { return nil } // a held pinch is never swapped for a sibling pinch
@@ -522,17 +674,37 @@ struct GestureRecognizer {
         }
     }
 
+    /// Whether index and middle are crossed, and since when. Runs every frame with a hand, like
+    /// trackPinch.
+    private mutating func trackCrossed(_ hand: HandPose, at time: TimeInterval) {
+        let threshold = crossed ? config.crossRelease : config.crossEngage
+        crossed = (hand.fingerCross ?? -.infinity) > threshold
+        if !crossed {
+            crossedSince = nil
+        } else if crossedSince == nil {
+            crossedSince = time
+        }
+    }
+
+    /// Crossed fingers that mean something. Crossed fingers also have index and middle up and the
+    /// others curled, so while this holds they aren't the two-finger pose, and nothing else fires.
+    private var crossIsForming: Bool { crossed && map[.crossedFingers] != .none }
+
     /// Debounces the two-finger pose: a few frames to start and a few missing to end, so a loose
     /// hand passing through it doesn't scroll or swipe and a one-frame flicker can't fire twice.
     /// Runs in every state, so letting go of the pose while paused is noticed.
     private mutating func trackTwoFingerPose(_ hand: HandPose) {
-        if hand.isTwoFingerPose { posedFrames += 1; unposedFrames = 0 } else { unposedFrames += 1; posedFrames = 0 }
+        let posed = hand.isTwoFingerPose && !crossIsForming
+        if posed { posedFrames += 1; unposedFrames = 0 } else { unposedFrames += 1; posedFrames = 0 }
         let bound = map[.twoFingers] != .none || Trigger.swipes.contains { map[$0] != .none }
         twoFingersHeld = bound && (twoFingersHeld ? unposedFrames < Self.poseFrames : posedFrames >= Self.poseFrames)
     }
 
     /// Whether a pinch has held `pinchHold`. Other triggers don't wait.
     private func heldLongEnough(_ trigger: Trigger, at time: TimeInterval) -> Bool {
+        if trigger == .crossedFingers {
+            return crossedSince.map { time - $0 >= config.crossHold } ?? false
+        }
         guard Trigger.pinches.contains(trigger) else { return true }
         guard let since = pinchSince, since.trigger == trigger else { return false }
         return time - since.time >= config.pinchHold
@@ -572,6 +744,10 @@ struct GestureRecognizer {
             pauseHeld = trigger
             active = nil
             events.append(.paused)
+            return []
+        case .scrollMode:
+            enterScrollMode(heldBy: trigger)
+            active = nil
             return []
         case .scroll, .zoom, .none: return []
         }
@@ -659,6 +835,10 @@ struct GestureRecognizer {
         resetSwipe()
         readyStart = nil
         dwellAnchor = nil
+        crossed = false
+        crossedSince = nil
+        // switchHeld survives: a hand that comes back still crossed mustn't switch straight back out.
+        neutral = nil
         mode = .idle
         return output(.idle, pointer: nil, actions: actions, label: isPaused ? "Paused" : Mode.idle.rawValue)
     }
