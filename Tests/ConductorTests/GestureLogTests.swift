@@ -22,5 +22,29 @@ final class GestureLogTests: XCTestCase {
         XCTAssertLessThan(try XCTUnwrap(pinch["indexTip"]), 0.35)
         let hands = try XCTUnwrap(second["hands"] as? [[String: Any]])
         XCTAssertEqual((hands.first?["joints"] as? [String: [Double]])?.count, HandJoint.allCases.count)
+        XCTAssertNil(second["face"])
+    }
+
+    func testTheFaceIsLoggedInDegreesWithEachEyesGaze() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "GestureLogTests.\(UUID())")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = try GestureLog(directory: dir)
+        var r = GestureRecognizer(config: .instant)
+        let output = r.update(hands: [], at: 0)
+        log.write(time: Date(), fps: 30, hands: [], primary: nil, face: FaceFixtures.face(pitchDegrees: 22.5),
+                  output: output, cursor: nil, sinceLastMs: 33, detectMs: 5, faceMs: 4, processMs: 11)
+        let line = try XCTUnwrap(String(contentsOf: log.url, encoding: .utf8).split(separator: "\n").first)
+        let frame = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        XCTAssertEqual(frame["faceMs"] as? Double, 4)
+        let face = try XCTUnwrap(frame["face"] as? [String: Any])
+        XCTAssertEqual(face["pitch"] as? Double, 22.5)
+        XCTAssertEqual(face["box"] as? [Double], [0.3, 0.4, 0.3, 0.4])
+        let left = try XCTUnwrap(face["leftEye"] as? [String: Any])
+        XCTAssertEqual(left["gaze"] as? [Double], [0, 0.5])
+        XCTAssertEqual(left["openness"] as? Double, 0.4)
+        // The right eye fixture has no pupil, so it has an opening but no gaze.
+        let right = try XCTUnwrap(face["rightEye"] as? [String: Any])
+        XCTAssertNil(right["gaze"])
+        XCTAssertEqual(right["openness"] as? Double, 0.4)
     }
 }

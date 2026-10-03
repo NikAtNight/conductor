@@ -8,6 +8,10 @@ A macOS menu bar app that turns a webcam view of your hands into mouse and keybo
 The 21 landmarks Vision reports for one hand in one camera frame, with a confidence per landmark.
 _Avoid_: skeleton, observation
 
+**Face pose**:
+The face box, head angles (roll, yaw, pitch), and eye landmarks Vision reports for the user's face in one camera frame.
+_Avoid_: eye tracking (we measure the head and estimate the eyes), gaze (that is the estimate, not the data)
+
 **Pointer**:
 The landmark the cursor follows (the index knuckle). A pointer sample is where it is in one frame.
 _Avoid_: fingertip, hand position
@@ -43,6 +47,14 @@ _Avoid_: active area, region of interest
 **Calibration**:
 Measuring the control box from the area the hand actually reaches while tracing it for a few seconds.
 _Avoid_: setup, training
+
+**Look calibration**:
+Following a dot around each display's corners so Conductor learns the head angles for each screen.
+_Avoid_: gaze calibration, eye calibration
+
+**Look model**:
+The per-display head angle ranges that look calibration saves.
+_Avoid_: gaze model
 
 **Frame pipeline**:
 Everything that happens to one camera frame after hand detection, ending in the cursor position and the input commands to post.

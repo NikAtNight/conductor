@@ -72,8 +72,9 @@ open /Applications/Conductor.app
 The script installs to /Applications and keeps the previous build in the repo as
 `Conductor.app.previous`. Set `APP_OUTPUT` to build somewhere else.
 
-On first launch a setup assistant walks through camera access, Accessibility, where your camera
-sits, and calibrating your reach and pointer speed. It's in the menu bar menu afterwards too.
+On first launch a setup assistant walks through six steps: camera access, Accessibility, your
+screens and where the camera sits, look calibration, reach and pointer speed, and the gestures.
+It's in the menu bar menu afterwards too.
 
 Show Preview starts the camera and shows the skeleton Vision found, plus a dashed green box: that
 box is the part of the frame that maps to your whole screen. Calibrate Reach replaces the
@@ -103,13 +104,40 @@ with `tccutil reset Accessibility com.talix.conductor` and allow it again.
 
 ## Multiple displays
 
-Settings > Tracking > Displays has three modes:
+Settings > Displays has four modes:
 
 - All displays. The control box covers every monitor at once.
 - Display under the cursor. Each time your hand comes back into view, Conductor locks onto the
   display the cursor is on. Park the mouse on a monitor, raise your hand, and that monitor is yours
   until the hand drops out of frame.
 - Main display only.
+- Display you're looking at. The box maps onto whichever screen your head is turned toward. Needs
+  look calibration first.
+
+### Look calibration
+
+Calibrate Look, in the menu bar menu or Settings > Displays, covers every screen and walks a dot
+around each one: the four corners, then the centre, about eight seconds per screen. Follow the dot
+with your eyes and let your head move the way it normally does. Conductor records the head pitch
+and yaw Vision reports while the dot is on each screen and saves the range for that screen. It
+reads the head, not the eyes: pupils are too small and too easily hidden by glasses glare to be
+reliable from a webcam, and for stacked or side-by-side screens the head tilt is enough.
+
+When you're looking, the screen whose angle range is closest to your current head angles gets the
+box. Switching takes a quarter of a second of looking at the other screen and never happens
+mid-drag or mid-scroll.
+
+Run it once from each place you sit. Measurements showed that further back the head moves only a
+few degrees between stacked screens while the eyes do the rest, so one close pass can't be scaled
+to cover it. Conductor keeps one pass per sitting distance, gauged by how tall your face is in the
+picture. A new pass within about 15% of an existing pass's distance replaces it. Between passes it
+interpolates; beyond the nearest or furthest pass it extrapolates by geometry alone, which is only
+a rough guide. Recalibrate if you move the camera or rearrange the screens. Forget, in Settings >
+Displays, drops every pass.
+
+Calibration fails if it didn't see your face while the dot was on a screen, or if your head barely
+moved between two screens. For the second, sit a little closer or move your head more and try
+again.
 
 Side-by-side and stacked layouts both work. A few things keep them predictable:
 
@@ -138,6 +166,14 @@ any actions fired, where the cursor went, and frame timing (gap since the previo
 in Vision, time for the whole frame). Camera stalls and settings refreshes get their own lines. It's numbers only, never camera images, and it stays
 on your Mac. Turn it off when you're done; it grows by a few megabytes a minute.
 
+While recording, Conductor also runs Vision's face request and logs your face: its box (the height
+is a distance gauge), head roll, yaw and pitch in degrees (pitch positive looking down), Vision's
+landmark confidence, and for each eye the pupil, where it sits inside the eye opening, how open the
+eye is, and a glare figure (the share of near-white pixels over the eye, which climbs when a screen
+reflects in glasses). The face is detected while the log is on, while the display mode is "Display
+you're looking at", and during look calibration. While it is, the preview draws the face box, eye
+outlines and pupils in cyan and shows the head angles next to the frame rate.
+
 ## Tuning
 
 Menu bar > Settings. Start with the control box: make it as small as you can while still aiming
@@ -165,14 +201,14 @@ Sources/Conductor/
   FramePipeline.swift  One frame after detection: recognizer, filter, pointers, scroll and zoom,
                  the input gate. Hands and a time in, cursor and input commands out
   Camera/        AVCaptureSession wrapper, camera choice, brightness/confidence checks
-  Tracking/      Vision hand pose request, the HandPose model (open hand, fist, two fingers),
-                 the gesture log
+  Tracking/      Vision hand pose and face requests, the HandPose model (open hand, fist, two
+                 fingers), the FacePose model (head angles, eyes), the gesture log
   Gestures/      GestureMap, GestureRecognizer (control, pause, dwell, swipes), ControlBox,
                  ScreenMapper, calibration, One Euro filter, pointer helpers, ScrollPolicy
   Control/       CGEvent posting (incl. held modifier keys), Accessibility check, global hotkey
   Feedback/      Cursor ring overlay, hand map, sounds and VoiceOver announcements
   MenuBar/       Status item and menu
-  Views/         Preview, toolbar-tab settings window, setup assistant
+  Views/         Preview, toolbar-tab settings window, setup assistant, look calibration overlay
   Model/         Preferences (UserDefaults), presets and app profiles, TrackingState (UI)
 ```
 
@@ -181,4 +217,4 @@ Sources/Conductor/
 Things that came up while scoping and were left out on purpose:
 
 - Keyboard input or an on-screen keyboard.
-- Head or gaze tracking.
+- Gaze tracking. Head pose picks a display; nothing follows the eyes.

@@ -26,6 +26,27 @@ final class GestureLog {
         var openHand: Bool
     }
 
+    /// The user's face, for working out which display they're looking at.
+    struct Face: Encodable {
+        /// Vision space: x, y, width, height. Height is the distance gauge.
+        var box: [Double]
+        /// Degrees. Pitch is positive nodding down.
+        var roll: Double?
+        var yaw: Double?
+        var pitch: Double?
+        var landmarkConfidence: Double?
+        var leftEye: Eye?
+        var rightEye: Eye?
+    }
+
+    struct Eye: Encodable {
+        var pupil: [Double]?
+        /// Pupil position inside the eye opening, -1...1 each axis, +y toward the upper lid.
+        var gaze: [Double]?
+        var openness: Double?
+        var glare: Double?
+    }
+
     struct Frame: Encodable {
         /// Unix time in seconds.
         var time: Double
@@ -35,12 +56,15 @@ final class GestureLog {
         var actions: [String]
         var hands: [Hand]
         var primary: Measures?
+        var face: Face?
         /// Where the cursor was sent this frame, in global screen points.
         var cursor: [Double]?
         /// Milliseconds since the camera delivered the previous frame; stalls show up here.
         var sinceLastMs: Double?
-        /// Milliseconds spent in Vision, and in the whole frame before this line was written.
+        /// Milliseconds spent in Vision on hands, on the face, and in the whole frame before this
+        /// line was written.
         var detectMs: Double
+        var faceMs: Double?
         var processMs: Double
     }
 
@@ -79,16 +103,17 @@ final class GestureLog {
         try? handle.close()
     }
 
-    func write(time: Date, fps: Double, hands: [HandPose], primary: HandPose?,
+    func write(time: Date, fps: Double, hands: [HandPose], primary: HandPose?, face: FacePose? = nil,
                output: GestureRecognizer.Output, cursor: CGPoint?,
-               sinceLastMs: Double?, detectMs: Double, processMs: Double) {
+               sinceLastMs: Double?, detectMs: Double, faceMs: Double? = nil, processMs: Double) {
         append(Frame(
             time: time.timeIntervalSince1970, fps: fps, mode: output.mode.rawValue, label: output.label,
             actions: output.actions.map { String(describing: $0) },
-            hands: hands.map(Self.hand), primary: primary.map(Self.measures),
+            hands: hands.map(Self.hand), primary: primary.map(Self.measures), face: face.map(Self.face),
             cursor: cursor.map { [Self.round($0.x, places: 1), Self.round($0.y, places: 1)] },
             sinceLastMs: sinceLastMs.map { Self.round($0, places: 1) },
-            detectMs: Self.round(detectMs, places: 1), processMs: Self.round(processMs, places: 1)))
+            detectMs: Self.round(detectMs, places: 1), faceMs: faceMs.map { Self.round($0, places: 1) },
+            processMs: Self.round(processMs, places: 1)))
     }
 
     func note(_ event: String) {
@@ -115,6 +140,21 @@ final class GestureLog {
         return Measures(scale: pose.scale.map { round($0) }, palmWidth: pose.palmWidth.map { round($0) }, pinch: pinch,
                         indexLift: pose.indexLift.map { round($0) }, indexLength: pose.visibleLength(of: .indexTip).map { round($0) },
                         othersCurled: pose.othersCurled, fist: pose.isFist, openHand: pose.isOpenHand)
+    }
+
+    private static func face(_ pose: FacePose) -> Face {
+        func degrees(_ radians: Double?) -> Double? { radians.map { round($0 * 180 / .pi, places: 1) } }
+        return Face(box: [round(pose.box.minX), round(pose.box.minY), round(pose.box.width), round(pose.box.height)],
+                    roll: degrees(pose.roll), yaw: degrees(pose.yaw), pitch: degrees(pose.pitch),
+                    landmarkConfidence: pose.landmarkConfidence.map { round(CGFloat($0), places: 2) },
+                    leftEye: pose.leftEye.map(eye), rightEye: pose.rightEye.map(eye))
+    }
+
+    private static func eye(_ eye: FacePose.Eye) -> Eye {
+        Eye(pupil: eye.pupil.map { [round($0.x), round($0.y)] },
+            gaze: eye.gaze.map { [round($0.dx, places: 2), round($0.dy, places: 2)] },
+            openness: eye.openness.map { round($0, places: 2) },
+            glare: eye.glare.map { round($0, places: 2) })
     }
 
     private static func round(_ value: CGFloat, places: Int = 4) -> Double {

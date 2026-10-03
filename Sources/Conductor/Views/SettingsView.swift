@@ -71,6 +71,7 @@ struct TrackingSettingsView: View {
 
 struct DisplaySettingsView: View {
     @ObservedObject var preferences: Preferences
+    let calibrateLook: () -> Void
 
     var body: some View {
         Form {
@@ -78,7 +79,20 @@ struct DisplaySettingsView: View {
                 Picker("Hand controls", selection: $preferences.displayMode) {
                     ForEach(Preferences.DisplayMode.allCases) { Text($0.title).tag($0) }
                 }
-                Caption("All displays stretches the control box across every monitor. Display under the cursor re-targets whichever screen the cursor is on each time your hand comes back into view, so park the mouse on a monitor and raise your hand.")
+                Caption("All displays stretches the control box across every monitor, and Main display only keeps it on one. Display under the cursor locks onto the screen the cursor is on each time your hand comes back into view. Display you're looking at puts the box on whichever screen your head is turned toward.")
+                if preferences.displayMode == .lookedAt, preferences.lookModel == nil {
+                    Caption("This mode needs look calibration first. Until then the box stays on one display.")
+                }
+                LabeledContent("Looking") {
+                    HStack {
+                        Text(lookStatus).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Forget") { preferences.lookModel = nil }
+                            .disabled(preferences.lookModel == nil)
+                        Button("Calibrate Look…", action: calibrateLook)
+                    }
+                }
+                Caption("Calibrating walks a dot around the corners of each screen and measures where your head points. Run it once from each place you usually sit: further back your head moves less and your eyes do more, so one pass can't cover both. Do it again if you move the camera or the screens. Forget drops every pass.")
             }
             Section("Camera position") {
                 CameraPlacementView(preferences: preferences)
@@ -86,5 +100,11 @@ struct DisplaySettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var lookStatus: String {
+        guard let model = preferences.lookModel, let pass = model.passes.first else { return "Not calibrated" }
+        let distances = model.passes.count == 1 ? "1 distance" : "\(model.passes.count) distances"
+        return "Calibrated at \(distances) for \(pass.targets.count) displays"
     }
 }

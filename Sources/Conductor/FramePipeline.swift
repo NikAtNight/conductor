@@ -46,7 +46,12 @@ struct FramePipeline {
     private var scroll = ScrollPolicy()
     private var prefs: Preferences.Snapshot
     private var displays: [CGRect] = []
-    private var screen: CGRect = .zero
+    /// Display UUID to bounds, for the LookPicker's picks. Only used in look mode.
+    private var lookDisplays: [String: CGRect] = [:]
+    /// Alive only in look mode with a calibrated model; see apply.
+    private var lookPicker: LookPicker?
+    /// The rectangle the control box maps onto.
+    private(set) var screen: CGRect = .zero
     private var cameraMount: (x: CGFloat, display: CGRect) = (0, .zero)
     private var inputAllowed = false
     private var wasIdle = true
@@ -73,12 +78,20 @@ struct FramePipeline {
     /// Takes new settings. Rebinding mid-gesture could orphan a held button, so the returned
     /// commands let go of anything the old bindings held.
     mutating func apply(_ snapshot: Preferences.Snapshot, map: GestureMap, displays: [CGRect],
-                        cameraMount: (x: CGFloat, display: CGRect)?) -> [InputCommand] {
+                        cameraMount: (x: CGFloat, display: CGRect)?,
+                        lookDisplays: [String: CGRect] = [:]) -> [InputCommand] {
         if snapshot.smoothing != prefs.smoothing {
             filter = PointFilter(minCutoff: snapshot.smoothing, beta: Self.filterBeta)
         }
         prefs = snapshot
         self.displays = displays
+        self.lookDisplays = lookDisplays
+        // The picker keeps its dwell state across unrelated settings changes; a new model starts over.
+        if snapshot.displayMode == .lookedAt, let model = snapshot.lookModel {
+            if lookPicker?.model != model { lookPicker = LookPicker(model: model) }
+        } else {
+            lookPicker = nil
+        }
         screen = Self.targetScreen(mode: snapshot.displayMode, displays: displays, current: screen)
         if let cameraMount { self.cameraMount = cameraMount }
         relayoutBox()
@@ -133,8 +146,11 @@ struct FramePipeline {
 
     // MARK: Frames
 
-    /// One frame. `cursorLocation` is asked for the real cursor only when the pipeline needs it.
-    mutating func step(hands: [HandPose], at time: TimeInterval, cursorLocation: () -> CGPoint?) -> Output {
+    /// One frame. `face` matters only in look mode. `cursorLocation` is asked for the real cursor
+    /// only when the pipeline needs it.
+    mutating func step(hands: [HandPose], face: FacePose? = nil, at time: TimeInterval,
+                       cursorLocation: () -> CGPoint?) -> Output {
+        if lookPicker != nil { followLook(face, at: time) }
         // On reacquiring the hand, follow-cursor mode re-targets the display the cursor is on.
         if !hands.isEmpty, wasIdle, prefs.displayMode == .followCursor, displays.count > 1 {
             let next = Self.targetScreen(mode: .followCursor, displays: displays, current: screen, cursor: cursorLocation())
@@ -231,6 +247,24 @@ struct FramePipeline {
 
     // MARK: Screen and box
 
+    /// Look mode: moves the target to the display the head points at. A switch mid-drag would carry
+    /// the held button across screens, so the picker waits while a trigger is held.
+    private mutating func followLook(_ face: FacePose?, at time: TimeInterval) {
+        let locked = [.drag, .scroll, .zoom].contains(recognizer.mode) || recognizer.isHoldingTrigger
+        guard let uuid = lookPicker?.update(face, at: time, locked: locked),
+              let next = lookDisplays[uuid], next != screen else { return }
+        if prefs.pointerMode == .relative, screen.width > 0, screen.height > 0 {
+            // Same fractional spot on the new screen, so the cursor arrives rather than jumps to a corner.
+            relativeCursor = CGPoint(
+                x: next.minX + (relativeCursor.x - screen.minX) / screen.width * next.width,
+                y: next.minY + (relativeCursor.y - screen.minY) / screen.height * next.height)
+        }
+        screen = next
+        relayoutBox()
+        // The next absolute sample lands exactly where the hand maps on the new display.
+        precision.reset()
+    }
+
     /// Recomputes the control box for the current target and camera.
     private mutating func relayoutBox() {
         if let calibrated = prefs.calibratedBox {
@@ -238,10 +272,16 @@ struct FramePipeline {
             box = ScreenMapper.visionRect(forViewBox: calibrated, mirrored: prefs.mirrored)
             return
         }
+        // The layout shifts the box toward the target so a hand reaching for a screen lands on it.
+        // In look mode the head already chose the screen, so the hand shouldn't have to reach: lay
+        // the box out as if the camera sat centred on the target, which keeps it at rest height
+        // and centred no matter which display is picked.
+        let looking = lookPicker != nil
         box = ControlBox.layout(ControlBox.Input(
             width: prefs.boxWidth, height: prefs.boxHeight, offsetY: prefs.boxOffsetY,
             matchShape: prefs.matchScreenShape, target: screen,
-            cameraX: cameraMount.x, cameraDisplay: cameraMount.display))
+            cameraX: looking ? screen.midX : cameraMount.x,
+            cameraDisplay: looking ? screen : cameraMount.display))
     }
 
     /// Which rectangle the control box maps onto. `current` is kept in follow-cursor mode until the
@@ -257,6 +297,9 @@ struct FramePipeline {
         case .followCursor:
             guard let cursor else { return displays.contains(current) ? current : displays[0] }
             return displays.first { $0.contains(cursor) } ?? displays[0]
+        case .lookedAt:
+            // The LookPicker moves the target as the head turns; until it has seen a face, stay.
+            return displays.contains(current) ? current : displays[0]
         }
     }
 }

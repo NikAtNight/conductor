@@ -121,6 +121,8 @@ struct GestureRecognizer {
     private(set) var mode: Mode = .idle
     private(set) var isPaused = false
     private var active: Trigger?
+    /// Whether a trigger (pinch, fist, two fingers, both hands) is held right now.
+    var isHoldingTrigger: Bool { active != nil }
     private var lastLeftUpTime: TimeInterval = -1
     private var lastClickCount = 1
     private var frozenPointer: CGPoint?

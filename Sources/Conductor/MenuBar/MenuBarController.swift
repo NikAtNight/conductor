@@ -16,6 +16,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var cursorRing: CursorRing?
     private var handMap: HandMap?
     private var cues: Cues?
+    private let lookCalibration = LookCalibrationController()
     private var cancellables: Set<AnyCancellable> = []
 
     private let toggleItem = NSMenuItem(title: "Start Tracking", action: #selector(toggleTracking), keyEquivalent: "t")
@@ -72,6 +73,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             let view = SetupAssistantView(
                 preferences: preferences, state: state,
                 calibrate: { [weak self] in self?.calibrate() },
+                calibrateLook: { [weak self] in self?.calibrateLook() },
                 done: { [weak self] in
                     UserDefaults.standard.set(true, forKey: "setupComplete")
                     self?.setupWindow?.close()
@@ -98,6 +100,46 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
     }
 
+    /// Walks a dot around every display and saves the head angles seen for each as one pass at the
+    /// current sitting distance, then switches to the "Display you're looking at" mode so the
+    /// result is used right away. After the first pass, a hint says to repeat it from other seats.
+    @objc func calibrateLook() {
+        let displays = DisplayLayout.current()
+        let preferences = self.preferences
+        lookCalibration.start(displays: displays, engine: engine) { [weak self] result in
+            switch result {
+            case .success(let pass)?:
+                let model = (preferences.lookModel ?? LookModel(passes: [])).adding(pass)
+                preferences.lookModel = model
+                preferences.displayMode = .lookedAt
+                // The setup assistant's own text already says to repeat it from other seats.
+                if model.passes.count == 1, self?.setupWindow?.isVisible != true {
+                    let alert = NSAlert()
+                    alert.messageText = "Saved for this distance"
+                    alert.informativeText = "If you also work sitting further back, run Calibrate Look again from there. Conductor keeps one pass per distance."
+                    alert.runModal()
+                }
+            case .failure(let failure)?:
+                let alert = NSAlert()
+                alert.messageText = "Look calibration didn't work"
+                alert.informativeText = Self.message(for: failure, displays: displays)
+                alert.runModal()
+            case nil:
+                break
+            }
+        }
+    }
+
+    private static func message(for failure: LookCalibration.Failure, displays: [DisplayInfo]) -> String {
+        func name(_ uuid: String) -> String { displays.first { $0.uuid == uuid }?.name ?? "a display" }
+        switch failure {
+        case .tooFewSamples(let uuid):
+            return "Couldn't see your face while the dot was on \(name(uuid)). Make sure the camera can see you and try again."
+        case .indistinct(let a, let b):
+            return "Your head barely moved between \(name(a)) and \(name(b)), so Conductor can't tell them apart. Sit a little closer or move your head more, then try again."
+        }
+    }
+
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         statusLine.isEnabled = false
@@ -118,6 +160,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let calibrate = NSMenuItem(title: "Calibrate Reach…", action: #selector(calibrate), keyEquivalent: "")
         calibrate.target = self
         menu.addItem(calibrate)
+        let calibrateLook = NSMenuItem(title: "Calibrate Look…", action: #selector(calibrateLook), keyEquivalent: "")
+        calibrateLook.target = self
+        menu.addItem(calibrateLook)
         let setup = NSMenuItem(title: "Setup Assistant…", action: #selector(showSetup), keyEquivalent: "")
         setup.target = self
         menu.addItem(setup)
@@ -185,7 +230,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc func showSettings() {
         if settingsWindow == nil {
-            settingsWindow = SettingsWindowController(preferences: preferences, calibrate: { [weak self] in self?.calibrate() })
+            settingsWindow = SettingsWindowController(
+                preferences: preferences,
+                calibrate: { [weak self] in self?.calibrate() },
+                calibrateLook: { [weak self] in self?.calibrateLook() })
         }
         present(settingsWindow?.window)
     }

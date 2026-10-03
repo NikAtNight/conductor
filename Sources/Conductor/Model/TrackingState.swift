@@ -5,6 +5,11 @@ import Combine
 @MainActor
 final class TrackingState: ObservableObject {
     @Published var hands: [HandPose] = []
+    /// The user's face, while it's being detected: the gesture log is on, the display mode is
+    /// "Display you're looking at", or look calibration is running.
+    @Published var face: FacePose?
+    /// Name of the display the control box currently maps onto, in modes where that can change.
+    @Published var targetDisplayName: String?
     @Published var gestureLabel: String = "No hand"
     @Published var isRunning = false
     @Published var fps: Double = 0

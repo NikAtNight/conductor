@@ -7,13 +7,13 @@ import SwiftUI
 final class SettingsWindowController: NSWindowController {
     static let width: CGFloat = 540
 
-    init(preferences: Preferences, calibrate: @escaping () -> Void) {
+    init(preferences: Preferences, calibrate: @escaping () -> Void, calibrateLook: @escaping () -> Void) {
         let tabs = NSTabViewController()
         tabs.tabStyle = .toolbar
 
         let all: [(String, String, AnyView, CGFloat)] = [
             ("Tracking", "hand.raised", AnyView(TrackingSettingsView(preferences: preferences, calibrate: calibrate)), 680),
-            ("Displays", "display.2", AnyView(DisplaySettingsView(preferences: preferences)), 470),
+            ("Displays", "display.2", AnyView(DisplaySettingsView(preferences: preferences, calibrateLook: calibrateLook)), 560),
             ("Gestures", "hand.tap", AnyView(GestureSettingsView(preferences: preferences)), 660),
             ("Hands", "hand.wave", AnyView(HandsSettingsView(preferences: preferences)), 660),
             ("Camera", "web.camera", AnyView(CameraSettingsView(preferences: preferences)), 420),

@@ -19,19 +19,21 @@ final class FramePipelineTests: XCTestCase {
 
     /// Production defaults, except that taking control isn't the point of most tests here.
     private func makePipeline(map: GestureMap = .standard, requireReadyPose: Bool = false,
+                              displays: [String: CGRect]? = nil,
                               tweak: (inout Preferences.Snapshot) -> Void = { _ in }) -> FramePipeline {
         var snapshot = Preferences(defaults: UserDefaults(suiteName: "FramePipelineTests.\(UUID())")!).snapshot
         snapshot.requireReadyPose = requireReadyPose
         tweak(&snapshot)
         var p = FramePipeline(snapshot)
-        _ = p.apply(snapshot, map: map, displays: [screen], cameraMount: nil)
+        _ = p.apply(snapshot, map: map, displays: displays.map { Array($0.values) } ?? [screen], cameraMount: nil,
+                    lookDisplays: displays ?? [:])
         _ = p.setInputAllowed(true)
         return p
     }
 
-    private func frame(_ hands: [HandPose], count: Int = 1) {
+    private func frame(_ hands: [HandPose], face: FacePose? = nil, count: Int = 1) {
         for _ in 0..<count {
-            last = pipeline.step(hands: hands, at: t) { CGPoint(x: 500, y: 500) }
+            last = pipeline.step(hands: hands, face: face, at: t) { CGPoint(x: 500, y: 500) }
             commands += last!.commands
             t += dt
         }
@@ -144,6 +146,72 @@ final class FramePipelineTests: XCTestCase {
         map[.indexPinch] = .rightClick
         let snapshot = Preferences(defaults: UserDefaults(suiteName: "FramePipelineTests.\(UUID())")!).snapshot
         XCTAssertEqual(pipeline.apply(snapshot, map: map, displays: [screen], cameraMount: nil), [.leftUp(clickCount: 1)])
+    }
+
+    // MARK: Look mode
+
+    let top = CGRect(x: 0, y: 0, width: 1000, height: 500)
+    let bottom = CGRect(x: 0, y: 500, width: 1000, height: 500)
+
+    /// Two stacked displays and a model that puts the top one at pitch 0...5 and the bottom at
+    /// 10...15. The face fixture's box is 0.4 tall, so the model's distance matches it.
+    private func makeLookPipeline() -> FramePipeline {
+        let model = LookModel(targets: [
+            LookModel.Target(displayUUID: "top", pitch: 0...5, yaw: -10...10),
+            LookModel.Target(displayUUID: "bottom", pitch: 10...15, yaw: -10...10),
+        ], faceHeight: 0.4)
+        return makePipeline(displays: ["top": top, "bottom": bottom]) {
+            $0.displayMode = .lookedAt
+            $0.lookModel = model
+        }
+    }
+
+    /// A hand drifting a little each frame, so every frame posts a move.
+    private func drifting(_ face: FacePose, count: Int) {
+        for _ in 0..<count {
+            frame([PoseFixtures.openHand(at: CGPoint(x: 0.5 - 0.01 * CGFloat(t / dt), y: 0.3))], face: face)
+        }
+    }
+
+    func testLookingAtTheOtherDisplayMovesTheBoxThereAfterTheDwell() {
+        pipeline = makeLookPipeline()
+        drifting(FaceFixtures.face(pitchDegrees: 2), count: 5)
+        XCTAssertEqual(pipeline.screen, top)
+        XCTAssertGreaterThan(moves.count, 2)
+        XCTAssertTrue(moves.allSatisfy { top.contains($0) })
+        commands = []
+        drifting(FaceFixtures.face(pitchDegrees: 12), count: 2) // under the dwell
+        XCTAssertEqual(pipeline.screen, top, "a glance isn't enough")
+        XCTAssertTrue(moves.allSatisfy { top.contains($0) })
+        commands = []
+        drifting(FaceFixtures.face(pitchDegrees: 12), count: Int(LookPicker.dwell / dt) + 3)
+        XCTAssertEqual(pipeline.screen, bottom)
+        XCTAssertTrue(bottom.contains(moves.last!))
+        XCTAssertTrue(moves.suffix(3).allSatisfy { bottom.contains($0) })
+    }
+
+    func testAHeldPinchKeepsTheBoxOnItsDisplayUntilItReleases() {
+        pipeline = makeLookPipeline()
+        drifting(FaceFixtures.face(pitchDegrees: 2), count: 5)
+        frame([PoseFixtures.pinched()], count: 3)
+        XCTAssertTrue(commands.contains(.leftDown(clickCount: 1)))
+        commands = []
+        frame([PoseFixtures.pinched()], face: FaceFixtures.face(pitchDegrees: 12), count: Int(LookPicker.dwell / dt) + 5)
+        XCTAssertEqual(pipeline.screen, top, "no switch while the button is down")
+        XCTAssertTrue(moves.allSatisfy { top.contains($0) })
+        frame([PoseFixtures.openHand()], face: FaceFixtures.face(pitchDegrees: 12), count: 2)
+        XCTAssertTrue(commands.contains(.leftUp(clickCount: 1)))
+        XCTAssertEqual(pipeline.screen, bottom, "the dwell already passed, so the release lets it switch")
+    }
+
+    func testInLookModeTheBoxStaysPutWhenTheDisplayChanges() {
+        pipeline = makeLookPipeline()
+        drifting(FaceFixtures.face(pitchDegrees: 2), count: 5)
+        let onTop = pipeline.box
+        XCTAssertEqual(onTop.midX, 0.5, accuracy: 1e-9, "centred, not shifted toward a camera")
+        drifting(FaceFixtures.face(pitchDegrees: 12), count: Int(LookPicker.dwell / dt) + 3)
+        XCTAssertEqual(pipeline.screen, bottom)
+        XCTAssertEqual(pipeline.box, onTop, "the head picked the screen; the hand shouldn't have to reach for it")
     }
 
     func testTheControlBoxFollowsTheSettings() {

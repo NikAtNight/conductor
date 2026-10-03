@@ -3,22 +3,26 @@ import Combine
 import AVFoundation
 import ApplicationServices
 
-/// First-run walkthrough: permissions, camera position, calibration, and the basic gestures.
-/// Every status updates live, so granting a permission in System Settings ticks the step.
+/// First-run walkthrough: permissions, screens and camera, look and reach calibration, and the
+/// basic gestures. Every status updates live, so granting a permission in System Settings ticks
+/// the step.
 struct SetupAssistantView: View {
     @ObservedObject var preferences: Preferences
     @ObservedObject var state: TrackingState
     let calibrate: () -> Void
+    let calibrateLook: () -> Void
     let done: () -> Void
 
     @State private var cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
     @State private var trusted = AXIsProcessTrusted()
+    @State private var devices = CameraCapture.availableDevices()
+    @State private var displays = DisplayLayout.current()
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Set up Conductor").font(.title2.weight(.semibold))
-            Text("Five quick steps. You can come back here any time from the menu bar.")
+            Text("Six quick steps. You can come back here any time from the menu bar.")
                 .foregroundStyle(.secondary)
                 .padding(.top, 2)
             ScrollView {
@@ -38,6 +42,9 @@ struct SetupAssistantView: View {
                         default:
                             Button("Open Camera settings") { open("Privacy_Camera") }
                         }
+                        if devices.count > 1 {
+                            CameraPicker("Camera", preferences: preferences, devices: devices)
+                        }
                     }
                     step(2, "Let Conductor move the pointer", done: trusted) {
                         Text("macOS asks for Accessibility access before any app can click or type for you. Turn Conductor on in the list.")
@@ -48,11 +55,24 @@ struct SetupAssistantView: View {
                             }
                         }
                     }
-                    step(3, "Show where your camera is", done: preferences.cameraPlacement != nil) {
-                        Text("Click the screen your camera sits on. Automatic is fine for a laptop camera.")
+                    step(3, "Your screens and camera", done: preferences.cameraPlacement != nil) {
+                        Text("\(displaySummary) Click the screen your camera sits on.")
                         CameraPlacementView(preferences: preferences)
                     }
-                    step(4, "Calibrate your reach and speed", done: preferences.calibratedBox != nil) {
+                    step(4, "Show which screen you're looking at", done: preferences.lookModel != nil) {
+                        if displays.count < 2 {
+                            Text("You have one display, so this isn't needed.")
+                        } else {
+                            Text("Sit the way you usually do. A dot will walk around the corners of each screen; follow it with your eyes and let your head move naturally. About eight seconds per screen.")
+                            Text("Run it from where you usually sit. If you also work leaning back, run it again from there; Conductor keeps one pass per distance and blends between them.")
+                        }
+                        HStack {
+                            Button("Calibrate Look", action: calibrateLook)
+                                .disabled(cameraStatus != .authorized || displays.count < 2)
+                            Text(lookText).foregroundStyle(.secondary)
+                        }
+                    }
+                    step(5, "Calibrate your reach and speed", done: preferences.calibratedBox != nil) {
                         Text("Sit as you normally do. Press Calibrate, then trace the edge of the area you can reach comfortably for six seconds. Optional; skip it to use the automatic box.")
                         HStack {
                             Button("Calibrate", action: calibrate)
@@ -66,7 +86,7 @@ struct SetupAssistantView: View {
                             SettingSlider(title: "Trackpad speed", value: $preferences.trackpadSpeed, range: 0.3...3.0, format: "%.1fx")
                         }
                     }
-                    step(5, "The gestures", done: false) {
+                    step(6, "The gestures", done: false) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("• Hold an open hand still for half a second to take control.")
                             Text("• Point with your hand; pinch thumb and index to click, hold the pinch to drag.")
@@ -84,11 +104,31 @@ struct SetupAssistantView: View {
             }
         }
         .padding(24)
-        .frame(width: 560, height: 680)
+        .frame(width: 560, height: 720)
         .onReceive(tick) { _ in
             cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
             trusted = AXIsProcessTrusted()
         }
+        .onReceive(NotificationCenter.default.publisher(for: AVCaptureDevice.wasConnectedNotification)) { _ in
+            devices = CameraCapture.availableDevices()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVCaptureDevice.wasDisconnectedNotification)) { _ in
+            devices = CameraCapture.availableDevices()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
+            displays = DisplayLayout.current()
+        }
+    }
+
+    private var displaySummary: String {
+        let names = ListFormatter.localizedString(byJoining: displays.map(\.name))
+        return displays.count == 1 ? "Conductor sees 1 display: \(names)." : "Conductor sees \(displays.count) displays: \(names)."
+    }
+
+    private var lookText: String {
+        guard let model = preferences.lookModel, let pass = model.passes.first else { return "" }
+        let distances = model.passes.count == 1 ? "1 distance" : "\(model.passes.count) distances"
+        return "Calibrated at \(distances) for \(pass.targets.count) displays."
     }
 
     private var isCalibrating: Bool {

@@ -36,7 +36,7 @@ enum DisplayLayout {
     }
 
     /// Display IDs can change across reboots and replugs; the UUID is stable, so placements key on it.
-    private static func uuidString(for id: CGDirectDisplayID) -> String {
+    static func uuidString(for id: CGDirectDisplayID) -> String {
         guard let uuid = CGDisplayCreateUUIDFromDisplayID(id)?.takeRetainedValue(),
               let string = CFUUIDCreateString(nil, uuid) else { return "id-\(id)" }
         return string as String

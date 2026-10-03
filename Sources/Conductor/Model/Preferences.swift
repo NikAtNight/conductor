@@ -66,6 +66,8 @@ final class Preferences: ObservableObject {
     }
     /// Nil means automatic: see CameraPlacement.resolve.
     @Published var cameraPlacement: CameraPlacement? { didSet { save() } }
+    /// Head angles per display from look calibration. Nil until calibrated; `lookedAt` needs it.
+    @Published var lookModel: LookModel? { didSet { save() } }
 
     enum DisplayMode: String, CaseIterable, Identifiable {
         /// The control box covers the union of every connected display.
@@ -73,6 +75,8 @@ final class Preferences: ObservableObject {
         /// Each time the hand reappears, lock onto the display the cursor is on.
         case followCursor
         case main
+        /// The whole box maps onto whichever display the head is turned toward (see LookPicker).
+        case lookedAt
 
         var id: String { rawValue }
         var title: String {
@@ -80,6 +84,7 @@ final class Preferences: ObservableObject {
             case .all: return "All displays"
             case .followCursor: return "Display under the cursor"
             case .main: return "Main display only"
+            case .lookedAt: return "Display you're looking at"
             }
         }
     }
@@ -113,6 +118,7 @@ final class Preferences: ObservableObject {
         var dwellClick: Bool
         var dwellTime: Double
         var recordGestureLog: Bool
+        var lookModel: LookModel?
     }
 
     var snapshot: Snapshot {
@@ -125,10 +131,14 @@ final class Preferences: ObservableObject {
                  cameraDeviceID: cameraDeviceID, powerSaving: powerSaving, calibratedBox: calibratedBox,
                  pinchDeadZone: pinchDeadZone, dwellRadius: dwellRadius, appProfiles: appProfiles,
                  mainHand: mainHand, requireReadyPose: requireReadyPose, dwellClick: dwellClick, dwellTime: dwellTime,
-                 recordGestureLog: recordGestureLog)
+                 recordGestureLog: recordGestureLog, lookModel: lookModel)
     }
 
     private let defaults: UserDefaults
+    /// Optional properties start as nil before init runs, so assigning them in init goes through
+    /// the published setter and fires didSet. A save at that point would write half-loaded values
+    /// over the stored ones (it dropped the look model once), so saving waits until init is done.
+    private var loaded = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -188,6 +198,17 @@ final class Preferences: ObservableObject {
         }
         cameraPlacement = defaults.data(forKey: "cameraPlacement")
             .flatMap { try? JSONDecoder().decode(CameraPlacement.self, from: $0) }
+        lookModel = defaults.data(forKey: "lookModel").flatMap(Self.decodeLookModel)
+        loaded = true
+    }
+
+    /// A saved look model, including the flat single-pass shape the first builds wrote, which
+    /// loads as pass one so nobody has to calibrate again.
+    private static func decodeLookModel(_ data: Data) -> LookModel? {
+        if let model = try? JSONDecoder().decode(LookModel.self, from: data) { return model }
+        struct Flat: Decodable { var targets: [LookModel.Target]; var faceHeight: Double }
+        guard let flat = try? JSONDecoder().decode(Flat.self, from: data) else { return nil }
+        return LookModel(targets: flat.targets, faceHeight: flat.faceHeight)
     }
 
     func resetToDefaults() {
@@ -197,6 +218,7 @@ final class Preferences: ObservableObject {
         gestureMap = .standard
         matchScreenShape = true
         cameraPlacement = nil
+        lookModel = nil
         mainHand = .right
         requireReadyPose = true
         dwellClick = false
@@ -217,6 +239,7 @@ final class Preferences: ObservableObject {
     }
 
     private func save() {
+        guard loaded else { return }
         defaults.set(boxWidth, forKey: "boxWidth")
         defaults.set(boxHeight, forKey: "boxHeight")
         defaults.set(boxOffsetY, forKey: "boxOffsetY")
@@ -256,6 +279,11 @@ final class Preferences: ObservableObject {
             defaults.set(data, forKey: "cameraPlacement")
         } else {
             defaults.removeObject(forKey: "cameraPlacement")
+        }
+        if let lookModel, let data = try? JSONEncoder().encode(lookModel) {
+            defaults.set(data, forKey: "lookModel")
+        } else {
+            defaults.removeObject(forKey: "lookModel")
         }
     }
 }

@@ -13,6 +13,7 @@ final class Engine: @unchecked Sendable {
     let preferences: Preferences
 
     private let tracker = HandTracker()
+    private let faceTracker = FaceTracker()
     private let input = InputController()
     private var frameTimes: [CFTimeInterval] = []
     private var permissionTimer: Timer?
@@ -27,7 +28,14 @@ final class Engine: @unchecked Sendable {
     private var calibrationEnd: CFTimeInterval?
     private var calibrationSamples: [CGPoint] = []
     private var onCalibrated: ((CGRect?) -> Void)?
+    /// Set while look calibration samples the face; see startLookSampling.
+    private var onFace: (@MainActor (FacePose?) -> Void)?
     private var publishedBox: CGRect?
+    /// The connected displays, for naming the one the control box targets.
+    private var displayLayout: [DisplayInfo] = []
+    private var publishedTargetName: String?
+    /// The last face seen, kept across the frames look mode skips so the preview doesn't flicker.
+    private var lastFace: FacePose?
     /// When the last camera frame arrived, for the stalled-camera watchdog.
     private var lastFrameTime: CFTimeInterval = 0
     private var watchdog: DispatchSourceTimer?
@@ -167,10 +175,13 @@ final class Engine: @unchecked Sendable {
         let mainMs = (CACurrentMediaTime() - started) * 1000
         camera.queue.async { [self] in
             prefs = snapshot
+            displayLayout = layout
             post(pipeline.apply(snapshot, map: map, displays: bounds,
-                                cameraMount: resolved.map { ($0.x, $0.display.bounds) }))
+                                cameraMount: resolved.map { ($0.x, $0.display.bounds) },
+                                lookDisplays: Dictionary(uniqueKeysWithValues: layout.map { ($0.uuid, $0.bounds) })))
             post(pipeline.setInputAllowed(trusted))
             publishBox()
+            publishTargetDisplay()
             if !snapshot.recordGestureLog {
                 gestureLog = nil
             } else if gestureLog == nil {
@@ -201,6 +212,42 @@ final class Engine: @unchecked Sendable {
             calibrationEnd = CACurrentMediaTime() + Calibration.duration
             onCalibrated = finish
         }
+    }
+
+    /// Look calibration: starts the camera if needed, then hands every frame's face (or nil when
+    /// none is seen) to `handler` on the main actor until `stopLookSampling`. Hands are shown in
+    /// the preview but not acted on meanwhile. Returns false if the camera couldn't start.
+    @MainActor
+    func startLookSampling(_ handler: @escaping @MainActor (FacePose?) -> Void) async -> Bool {
+        if !state.isRunning { await start() }
+        guard state.isRunning else { return false }
+        camera.queue.async { [self] in
+            post(pipeline.releaseHeld())
+            lastHandTime = CACurrentMediaTime() // full frame rate while sampling
+            onFace = handler
+        }
+        return true
+    }
+
+    @MainActor
+    func stopLookSampling() {
+        camera.queue.async { [self] in
+            onFace = nil
+            pipeline.reset()
+        }
+    }
+
+    /// One look-sampling frame. Returns true while sampling, so the caller skips gesture handling.
+    private func lookSamplingStep(_ buffer: CMSampleBuffer, hands: [HandPose], fps: Double) -> Bool {
+        guard let onFace else { return false }
+        let face = faceTracker.detect(in: buffer)
+        Task { @MainActor in
+            self.state.hands = hands
+            self.state.face = face
+            self.state.fps = fps
+            onFace(face)
+        }
+        return true
     }
 
     /// One calibration frame. Returns true while calibrating, so the caller skips gesture handling.
@@ -240,6 +287,19 @@ final class Engine: @unchecked Sendable {
         guard box != publishedBox else { return }
         publishedBox = box
         Task { @MainActor in self.state.controlBox = box }
+    }
+
+    /// Camera queue. Publishes the name of the display the control box maps onto when it changes,
+    /// in the modes where it can change. Nil elsewhere so the UI shows nothing.
+    private func publishTargetDisplay() {
+        var name: String?
+        if prefs.displayMode == .lookedAt || prefs.displayMode == .followCursor {
+            let screen = pipeline.screen
+            name = displayLayout.first { $0.bounds == screen }?.name
+        }
+        guard name != publishedTargetName else { return }
+        publishedTargetName = name
+        Task { @MainActor in self.state.targetDisplayName = name }
     }
 
     /// Camera queue. Hands the pipeline's commands to the input adapter, in order.
@@ -292,19 +352,41 @@ final class Engine: @unchecked Sendable {
         frameTimes.append(now)
         frameTimes.removeAll { now - $0 > 1 }
         if calibrationStep(hands: hands, now: now, fps: Double(frameTimes.count)) { return }
+        if lookSamplingStep(buffer, hands: hands, fps: Double(frameTimes.count)) { return }
         let fps = Double(frameTimes.count)
 
-        let frame = pipeline.step(hands: hands, at: now) { CGEvent(source: nil)?.location }
+        // The face feeds the log and, in look mode, the display pick. Look mode alone detects it on
+        // every other frame to save CPU; the picker's dwell makes a frame's delay invisible.
+        let looking = prefs.displayMode == .lookedAt
+        let wantsFace = gestureLog != nil || looking
+        var face: FacePose?
+        var faceMs: Double = 0
+        if wantsFace, gestureLog != nil || frameCount % 2 == 0 {
+            let faceStart = CACurrentMediaTime()
+            face = faceTracker.detect(in: buffer)
+            faceMs = (CACurrentMediaTime() - faceStart) * 1000
+            lastFace = face
+        } else if looking {
+            face = lastFace
+        } else {
+            lastFace = nil
+        }
+
+        let frame = pipeline.step(hands: hands, face: face, at: now) { CGEvent(source: nil)?.location }
         post(frame.commands)
         publishBox()
-        gestureLog?.write(time: Date(), fps: fps, hands: hands, primary: primary,
-                          output: frame.recognized, cursor: frame.cursor, sinceLastMs: sinceLast.map { $0 * 1000 },
-                          detectMs: detectMs, processMs: (CACurrentMediaTime() - now) * 1000)
+        publishTargetDisplay()
+        if let gestureLog {
+            gestureLog.write(time: Date(), fps: fps, hands: hands, primary: primary, face: face,
+                             output: frame.recognized, cursor: frame.cursor, sinceLastMs: sinceLast.map { $0 * 1000 },
+                             detectMs: detectMs, faceMs: faceMs, processMs: (CACurrentMediaTime() - now) * 1000)
+        }
         let recognized = frame.recognized
         let clicked = frame.commands.contains(where: \.isClick)
 
         Task { @MainActor in
             self.state.hands = hands
+            self.state.face = face
             self.state.fps = fps
             self.state.gestureLabel = idle ? "Idle: checking for your hand a few times a second" : recognized.label
             if self.state.warning != warning { self.state.warning = warning }
