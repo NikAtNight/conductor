@@ -77,7 +77,8 @@ sits, and calibrating your reach and pointer speed. It's in the menu bar menu af
 
 Show Preview starts the camera and shows the skeleton Vision found, plus a dashed green box: that
 box is the part of the frame that maps to your whole screen. Calibrate Reach replaces the
-automatic box with the area you actually reach while tracing it for six seconds.
+automatic box with the area you actually reach while tracing it for six seconds. The cursor follows
+your index knuckle, so move your whole hand, not just your fingers. The green box grows as you trace.
 
 Show Hand Map, in the menu bar menu, puts a small always-on-top map in the bottom-right corner while
 tracking runs. It shows the box and a dot for your hand, red when the hand is outside the box, so

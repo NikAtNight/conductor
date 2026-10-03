@@ -32,6 +32,14 @@ final class CalibrationTests: XCTestCase {
         XCTAssertGreaterThan(box.minX, 0.25)
     }
 
+    func testExtentShowsATraceTooSmallToSave() throws {
+        let small = trace(CGRect(x: 0.5, y: 0.5, width: 0.05, height: 0.05))
+        XCTAssertNil(Calibration.box(from: small))
+        let traced = try XCTUnwrap(Calibration.extent(of: small))
+        XCTAssertEqual(traced.width, 0.05, accuracy: 0.01)
+        XCTAssertEqual(traced.height, 0.05, accuracy: 0.01)
+    }
+
     func testTooFewSamplesOrTooLittleMovementFails() {
         XCTAssertNil(Calibration.box(from: Array(repeating: CGPoint(x: 0.5, y: 0.5), count: 10)))
         XCTAssertNil(Calibration.box(from: trace(CGRect(x: 0.5, y: 0.5, width: 0.05, height: 0.05))))

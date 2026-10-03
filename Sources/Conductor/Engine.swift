@@ -142,6 +142,8 @@ final class Engine: @unchecked Sendable {
         guard calibrationEnd != nil else { return }
         calibrationEnd = nil
         calibrationSamples = []
+        publishedBox = nil // undo the live preview
+        publishBox()
         let done = onCalibrated
         onCalibrated = nil
         done?(nil)
@@ -212,23 +214,37 @@ final class Engine: @unchecked Sendable {
         let left = end - now
         if left > 0 {
             let seconds = Int(left.rounded(.up))
+            // Stretch the green box over what's been traced so far, so you see what's measured.
+            let traced = calibrationSamples.count >= Calibration.minimumSamples
+                ? Calibration.extent(of: calibrationSamples).map { ScreenMapper.visionRect(forViewBox: $0, mirrored: prefs.mirrored) }
+                : nil
             Task { @MainActor in
                 self.state.hands = hands
                 self.state.fps = fps
-                self.state.gestureLabel = "Calibrating: trace the edge of your comfortable reach, \(seconds)s"
+                self.state.gestureLabel = "Calibrating: move your whole hand around the edge of your comfortable reach, \(seconds)s"
                 self.state.calibration = .running(secondsLeft: seconds)
+                if let traced { self.state.controlBox = traced }
             }
             return true
         }
         calibrationEnd = nil
         let result = Calibration.box(from: calibrationSamples)
+        let traced = Calibration.extent(of: calibrationSamples) ?? .zero
+        gestureLog?.note(String(format: "calibration: %d samples, traced %.3f x %.3f, %@", calibrationSamples.count,
+                                traced.width, traced.height, result == nil ? "rejected" : "saved"))
         calibrationSamples = []
         pipeline.reset()
+        // The live preview overwrote the published box. A saved box is published by the refresh the
+        // preference change triggers; a rejected one puts the old box back now.
+        publishedBox = nil
+        if result == nil { publishBox() }
         let done = onCalibrated
         onCalibrated = nil
         Task { @MainActor in
             self.state.calibration = result == nil ? .failed : .finished
-            self.state.gestureLabel = result == nil ? "Calibration didn't see enough movement" : "Calibrated"
+            self.state.gestureLabel = result == nil
+                ? "Calibration saw too small an area. Move your whole hand, not just your fingers."
+                : "Calibrated"
         }
         done?(result)
         return true
