@@ -72,7 +72,7 @@ final class ProfileSelectionTests: XCTestCase {
     func testSwitchingProfilesWhilePausedStaysPaused() {
         var base = GestureMap.standard
         base[.littlePinch] = .pauseTracking
-        var r = GestureRecognizer(map: base)
+        var r = GestureRecognizer(config: .instant, map: base)
         _ = r.update(hands: [PoseFixtures.pinched(.littleTip)], at: 0)
         let other = Preferences.effectiveMap(base: base, profiles: ["app": AppProfile(bundleID: "app", name: "App", map: .standard)], frontmost: "app")
         _ = r.replaceMap(other)
@@ -82,7 +82,7 @@ final class ProfileSelectionTests: XCTestCase {
     }
 
     func testTurningOnTheReadyPoseMidHoldKeepsControl() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         XCTAssertEqual(r.update(hands: [PoseFixtures.pinched()], at: 0).actions, [.leftDown(clickCount: 1)])
         r.config.requireReadyPose = true
         let out = r.update(hands: [PoseFixtures.pinched()], at: 0.05)
@@ -94,14 +94,14 @@ final class ProfileSelectionTests: XCTestCase {
         var map = GestureMap.standard
         map[.ringPinch] = .holdKey(GestureAction.unsetKey)
         map[.middlePinch] = .shortcut(GestureAction.unsetKey)
-        var r = GestureRecognizer(map: map)
+        var r = GestureRecognizer(config: .instant, map: map)
         XCTAssertEqual(r.update(hands: [PoseFixtures.pinched(.ringTip)], at: 0).actions, [])
         XCTAssertEqual(r.update(hands: [PoseFixtures.openHand()], at: 0.1).actions, [])
         XCTAssertEqual(r.update(hands: [PoseFixtures.pinched(.middleTip)], at: 0.2).actions, [])
     }
 
     func testSwitchingMapsReleasesAHeldButtonButKeepsControl() {
-        var config = GestureRecognizer.Config()
+        var config = GestureRecognizer.Config.instant
         config.requireReadyPose = true
         var r = GestureRecognizer(config: config)
         var t = 0.0
@@ -116,7 +116,7 @@ final class ProfileSelectionTests: XCTestCase {
     func testPausedWithNoWayToResumeResumesItself() {
         var map = GestureMap.standard
         map[.littlePinch] = .pauseTracking
-        var r = GestureRecognizer(map: map)
+        var r = GestureRecognizer(config: .instant, map: map)
         _ = r.update(hands: [PoseFixtures.pinched(.littleTip)], at: 0)
         XCTAssertTrue(r.isPaused)
         _ = r.replaceMap(.standard) // no pause binding anywhere

@@ -22,6 +22,9 @@ final class Preferences: ObservableObject {
     @Published var dwellClick: Bool { didSet { save() } }
     @Published var dwellTime: Double { didSet { save() } }
     @Published var showCursorRing: Bool { didSet { save() } }
+    @Published var showHandMap: Bool { didSet { save() } }
+    /// Write every frame to a gesture log (see GestureLog).
+    @Published var recordGestureLog: Bool { didSet { save() } }
     @Published var soundCues: Bool { didSet { save() } }
     @Published var pointerMode: PointerMode { didSet { save() } }
     @Published var trackpadSpeed: Double { didSet { save() } }
@@ -109,6 +112,7 @@ final class Preferences: ObservableObject {
         var requireReadyPose: Bool
         var dwellClick: Bool
         var dwellTime: Double
+        var recordGestureLog: Bool
     }
 
     var snapshot: Snapshot {
@@ -120,7 +124,8 @@ final class Preferences: ObservableObject {
                  momentumScroll: momentumScroll,
                  cameraDeviceID: cameraDeviceID, powerSaving: powerSaving, calibratedBox: calibratedBox,
                  pinchDeadZone: pinchDeadZone, dwellRadius: dwellRadius, appProfiles: appProfiles,
-                 mainHand: mainHand, requireReadyPose: requireReadyPose, dwellClick: dwellClick, dwellTime: dwellTime)
+                 mainHand: mainHand, requireReadyPose: requireReadyPose, dwellClick: dwellClick, dwellTime: dwellTime,
+                 recordGestureLog: recordGestureLog)
     }
 
     private let defaults: UserDefaults
@@ -150,6 +155,8 @@ final class Preferences: ObservableObject {
         dwellClick = b("dwellClick", false)
         dwellTime = d("dwellTime", 0.8)
         showCursorRing = b("showCursorRing", true)
+        showHandMap = b("showHandMap", false)
+        recordGestureLog = b("recordGestureLog", false)
         soundCues = b("soundCues", false)
         pointerMode = PointerMode(rawValue: defaults.string(forKey: "pointerMode") ?? "") ?? .absolute
         trackpadSpeed = d("trackpadSpeed", 1.0)
@@ -157,6 +164,12 @@ final class Preferences: ObservableObject {
         momentumScroll = b("momentumScroll", true)
         cameraDeviceID = defaults.string(forKey: "cameraDeviceID")
         powerSaving = b("powerSaving", true)
+        // Boxes calibrated before the cursor followed the index knuckle were measured from the
+        // fingertips, about a hand length higher. Drop them once; the automatic box stands in.
+        if defaults.string(forKey: "calibrationPoint") != "indexKnuckle" {
+            defaults.removeObject(forKey: "calibratedBox")
+            defaults.set("indexKnuckle", forKey: "calibrationPoint")
+        }
         if let v = defaults.array(forKey: "calibratedBox") as? [Double], v.count == 4 {
             calibratedBox = CGRect(x: v[0], y: v[1], width: v[2], height: v[3])
         } else {
@@ -189,6 +202,8 @@ final class Preferences: ObservableObject {
         dwellClick = false
         dwellTime = 0.8
         showCursorRing = true
+        showHandMap = false
+        recordGestureLog = false
         soundCues = false
         pointerMode = .absolute
         trackpadSpeed = 1.0
@@ -218,6 +233,8 @@ final class Preferences: ObservableObject {
         defaults.set(dwellClick, forKey: "dwellClick")
         defaults.set(dwellTime, forKey: "dwellTime")
         defaults.set(showCursorRing, forKey: "showCursorRing")
+        defaults.set(showHandMap, forKey: "showHandMap")
+        defaults.set(recordGestureLog, forKey: "recordGestureLog")
         defaults.set(soundCues, forKey: "soundCues")
         defaults.set(pointerMode.rawValue, forKey: "pointerMode")
         defaults.set(trackpadSpeed, forKey: "trackpadSpeed")

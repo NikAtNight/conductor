@@ -5,7 +5,7 @@ final class ControlStateTests: XCTestCase {
     let dt = 1.0 / 30
 
     private func readyRecognizer() -> GestureRecognizer {
-        var config = GestureRecognizer.Config()
+        var config = GestureRecognizer.Config.instant
         config.requireReadyPose = true
         return GestureRecognizer(config: config)
     }
@@ -69,7 +69,7 @@ final class ControlStateTests: XCTestCase {
     }
 
     private func dwellRecognizer() -> GestureRecognizer {
-        var config = GestureRecognizer.Config()
+        var config = GestureRecognizer.Config.instant
         config.dwellClick = true
         return GestureRecognizer(config: config)
     }
@@ -112,7 +112,7 @@ final class ControlStateTests: XCTestCase {
     }
 
     func testPinchFeedbackGrowsAsFingersClose() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         XCTAssertEqual(r.update(hands: [PoseFixtures.openHand()], at: 0).feedback.pinch, 0)
         var halfway = PoseFixtures.openHand()
         let index = halfway[.indexTip]!

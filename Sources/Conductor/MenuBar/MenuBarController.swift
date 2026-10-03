@@ -14,11 +14,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var setupWindow: NSWindow?
     private var hotKey: HotKey?
     private var cursorRing: CursorRing?
+    private var handMap: HandMap?
     private var cues: Cues?
     private var cancellables: Set<AnyCancellable> = []
 
     private let toggleItem = NSMenuItem(title: "Start Tracking", action: #selector(toggleTracking), keyEquivalent: "t")
     private let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let handMapItem = NSMenuItem(title: "Show Hand Map", action: #selector(toggleHandMap), keyEquivalent: "")
+    private let gestureLogItem = NSMenuItem(title: "Record Gesture Log", action: #selector(toggleGestureLog), keyEquivalent: "")
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -29,6 +32,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         statusItem.menu?.delegate = self
 
         cursorRing = CursorRing(state: state, preferences: preferences)
+        handMap = HandMap(state: state, preferences: preferences)
         cues = Cues(state: state, preferences: preferences)
         hotKey = HotKey { [weak self] in
             Task { @MainActor in self?.toggleTracking() }
@@ -106,6 +110,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let preview = NSMenuItem(title: "Show Preview", action: #selector(showPreview), keyEquivalent: "p")
         preview.target = self
         menu.addItem(preview)
+        handMapItem.target = self
+        menu.addItem(handMapItem)
         let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
@@ -116,6 +122,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         setup.target = self
         menu.addItem(setup)
         menu.addItem(.separator())
+        gestureLogItem.target = self
+        menu.addItem(gestureLogItem)
+        let logs = NSMenuItem(title: "Show Gesture Logs", action: #selector(showGestureLogs), keyEquivalent: "")
+        logs.target = self
+        menu.addItem(logs)
+        menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Conductor", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
@@ -124,6 +136,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         toggleItem.title = state.isRunning ? "Pause Tracking" : "Start Tracking"
+        handMapItem.state = preferences.showHandMap ? .on : .off
+        gestureLogItem.state = preferences.recordGestureLog ? .on : .off
         if !state.isRunning {
             statusLine.title = "Tracking is off"
         } else if let problem = state.error ?? state.warning {
@@ -145,6 +159,19 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         } else {
             Task { await engine.start() }
         }
+    }
+
+    @objc private func toggleHandMap() {
+        preferences.showHandMap.toggle()
+    }
+
+    @objc private func toggleGestureLog() {
+        preferences.recordGestureLog.toggle()
+    }
+
+    @objc private func showGestureLogs() {
+        try? FileManager.default.createDirectory(at: GestureLog.directory, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(GestureLog.directory)
     }
 
     @objc private func showPreview() {

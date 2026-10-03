@@ -39,6 +39,35 @@ enum PoseFixtures {
         return hand
     }
 
+    /// Index out, the others curled. `bend` 0 is the index straight up; 1 curls its tip down below
+    /// the knuckle, which also makes the hand a fist. `tuckedThumb` rests the thumb where the
+    /// curled index tip lands.
+    static func pointing(bend: CGFloat = 0, tuckedThumb: Bool = false,
+                         at wrist: CGPoint = CGPoint(x: 0.5, y: 0.3)) -> HandPose {
+        var hand = twoFingers(at: wrist)
+        let middle = hand[.middleMCP]!
+        hand.joints[.middleTip] = CGPoint(x: middle.x, y: middle.y - 0.01)
+        let knuckle = hand[.indexMCP]!
+        let straight = hand[.indexTip]!
+        hand.joints[.indexTip] = CGPoint(x: straight.x, y: straight.y + (knuckle.y - 0.01 - straight.y) * bend)
+        if tuckedThumb {
+            hand.joints[.thumbTip] = CGPoint(x: straight.x + 0.005, y: knuckle.y - 0.01)
+        }
+        return hand
+    }
+
+    /// Pointing straight at the lens: the index joints bunch up over the knuckle, and the tip
+    /// lands on the thumb in the picture without touching it.
+    static func aimedAtCamera(at wrist: CGPoint = CGPoint(x: 0.5, y: 0.3)) -> HandPose {
+        var hand = pointing(at: wrist)
+        let knuckle = hand[.indexMCP]!
+        hand.joints[.indexPIP] = CGPoint(x: knuckle.x, y: knuckle.y + 0.01)
+        hand.joints[.indexDIP] = CGPoint(x: knuckle.x, y: knuckle.y + 0.015)
+        hand.joints[.indexTip] = CGPoint(x: knuckle.x, y: knuckle.y + 0.02)
+        hand.joints[.thumbTip] = CGPoint(x: knuckle.x - 0.005, y: knuckle.y + 0.02)
+        return hand
+    }
+
     /// Fingers curled so every fingertip is nearer the wrist than its PIP joint.
     static func fist(at wrist: CGPoint = CGPoint(x: 0.5, y: 0.3)) -> HandPose {
         var hand = openHand(at: wrist)
@@ -48,6 +77,15 @@ enum PoseFixtures {
             hand.joints[tip] = CGPoint(x: knuckle.x, y: knuckle.y - 0.01)
         }
         return hand
+    }
+}
+
+extension GestureRecognizer.Config {
+    /// Pinches engage on their first frame. For tests about everything else.
+    static var instant: Self {
+        var config = Self()
+        config.pinchHold = 0
+        return config
     }
 }
 
@@ -72,10 +110,27 @@ final class HandPoseTests: XCTestCase {
         XCTAssertTrue(PoseFixtures.fist().isFist)
     }
 
-    func testPointerIsMidpointOfThumbAndIndex() {
+    func testPointerIsTheIndexKnuckle() {
         let hand = PoseFixtures.openHand()
-        let p = hand.pointer!
-        XCTAssertEqual(p.x, (hand[.thumbTip]!.x + hand[.indexTip]!.x) / 2, accuracy: 1e-9)
-        XCTAssertEqual(p.y, (hand[.thumbTip]!.y + hand[.indexTip]!.y) / 2, accuracy: 1e-9)
+        XCTAssertEqual(hand.pointer, hand[.indexMCP])
+    }
+
+    func testPinchingPointingAndFistsLeaveThePointerAlone() {
+        let still = PoseFixtures.openHand().pointer
+        XCTAssertEqual(PoseFixtures.pinched().pointer, still)
+        XCTAssertEqual(PoseFixtures.pointing(bend: 1).pointer, still)
+        XCTAssertEqual(PoseFixtures.fist().pointer, still)
+    }
+
+    func testAFingerAimedAtTheCameraLooksShort() {
+        XCTAssertGreaterThan(PoseFixtures.openHand().visibleLength(of: .indexTip)!, 1)
+        XCTAssertLessThan(PoseFixtures.aimedAtCamera().visibleLength(of: .indexTip)!, 0.5)
+    }
+
+    func testPointingPoseHasTheOtherFingersCurled() {
+        XCTAssertTrue(PoseFixtures.pointing().othersCurled)
+        XCTAssertFalse(PoseFixtures.pointing().isFist)
+        XCTAssertFalse(PoseFixtures.openHand().othersCurled)
+        XCTAssertFalse(PoseFixtures.twoFingers().othersCurled)
     }
 }

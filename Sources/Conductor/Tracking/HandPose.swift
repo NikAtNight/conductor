@@ -37,12 +37,40 @@ struct HandPose: Equatable {
         return pa.distance(to: pb) / scale
     }
 
-    /// The point the cursor follows. Midway between thumb and index tips so a pinch, which
-    /// moves both tips toward each other, leaves the cursor almost still.
-    var pointer: CGPoint? {
-        guard let thumb = self[.thumbTip], let index = self[.indexTip] else { return nil }
-        return CGPoint(x: (thumb.x + index.x) / 2, y: (thumb.y + index.y) / 2)
+    /// The point the cursor follows: the index knuckle. Pinching, raising two fingers, and curling
+    /// into a fist all move the fingertips, not the knuckle, so none of them drag the cursor.
+    var pointer: CGPoint? { self[.indexMCP] }
+
+    /// Index knuckle to little knuckle. Runs across the hand, so unlike `scale` it keeps its length
+    /// when the fingers point at the camera.
+    var palmWidth: CGFloat? {
+        guard let index = self[.indexMCP], let little = self[.littleMCP] else { return nil }
+        return index.distance(to: little)
     }
+
+    /// How long a finger looks to the camera, knuckle to tip along its joints, in palm widths. A
+    /// finger aimed straight at the lens looks short, and then its tip can sit on top of the thumb
+    /// in the picture without touching it.
+    func visibleLength(of tip: HandJoint) -> CGFloat? {
+        guard let chain = Self.fingerChains[tip], let width = palmWidth, width > 0 else { return nil }
+        let points = chain.compactMap { self[$0] }
+        guard points.count == chain.count else { return nil }
+        return zip(points, points.dropFirst()).reduce(0) { $0 + $1.0.distance(to: $1.1) } / width
+    }
+
+    /// How far the index fingertip sits above its knuckle in the picture, in palm widths. Bending
+    /// the finger changes it; moving the whole hand doesn't. Logged for tuning.
+    var indexLift: CGFloat? {
+        guard let tip = self[.indexTip], let knuckle = self[.indexMCP], let width = palmWidth, width > 0 else { return nil }
+        return (tip.y - knuckle.y) / width
+    }
+
+    private static let fingerChains: [HandJoint: [HandJoint]] = [
+        .indexTip: [.indexMCP, .indexPIP, .indexDIP, .indexTip],
+        .middleTip: [.middleMCP, .middlePIP, .middleDIP, .middleTip],
+        .ringTip: [.ringMCP, .ringPIP, .ringDIP, .ringTip],
+        .littleTip: [.littleMCP, .littlePIP, .littleDIP, .littleTip],
+    ]
 
     /// Palm center: average of wrist and the four finger knuckles. Used for scroll motion.
     var palmCenter: CGPoint? {
@@ -85,15 +113,17 @@ struct HandPose: Equatable {
     /// True when index, middle, ring and little fingertips are all closer to the wrist than
     /// their own knuckles are, which only happens with curled fingers.
     var isFist: Bool {
-        guard let wrist = self[.wrist] else { return false }
-        let fingers: [(tip: HandJoint, pip: HandJoint)] = [
-            (.indexTip, .indexPIP), (.middleTip, .middlePIP), (.ringTip, .ringPIP), (.littleTip, .littlePIP),
-        ]
-        for finger in fingers {
-            guard let tip = self[finger.tip], let pip = self[finger.pip] else { return false }
-            if tip.distance(to: wrist) >= pip.distance(to: wrist) { return false }
-        }
-        return true
+        isCurled(.indexTip, .indexPIP) && othersCurled
+    }
+
+    /// Middle, ring and little curled: a pointing hand, whatever the index finger is doing.
+    var othersCurled: Bool {
+        isCurled(.middleTip, .middlePIP) && isCurled(.ringTip, .ringPIP) && isCurled(.littleTip, .littlePIP)
+    }
+
+    private func isCurled(_ tip: HandJoint, _ pip: HandJoint) -> Bool {
+        guard let wrist = self[.wrist], let t = self[tip], let p = self[pip] else { return false }
+        return t.distance(to: wrist) < p.distance(to: wrist)
     }
 }
 

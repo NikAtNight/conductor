@@ -6,7 +6,7 @@ final class GestureMapTests: XCTestCase {
     let dt = 1.0 / 30
 
     func testRingPinchDoesNothingByDefault() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         let out = r.update(hands: [PoseFixtures.pinched(.ringTip)], at: 0)
         XCTAssertTrue(out.actions.isEmpty)
         XCTAssertEqual(out.mode, .point)
@@ -15,7 +15,7 @@ final class GestureMapTests: XCTestCase {
     func testRingPinchMappedToScrollUsesPalmTravel() {
         var map = GestureMap.standard
         map[.ringPinch] = .scroll
-        var r = GestureRecognizer(map: map)
+        var r = GestureRecognizer(config: .instant, map: map)
         _ = r.update(hands: [PoseFixtures.pinched(.ringTip, at: CGPoint(x: 0.5, y: 0.3))], at: 0)
         let out = r.update(hands: [PoseFixtures.pinched(.ringTip, at: CGPoint(x: 0.5, y: 0.35))], at: dt)
         XCTAssertEqual(out.mode, .scroll)
@@ -28,7 +28,7 @@ final class GestureMapTests: XCTestCase {
         var map = GestureMap.standard
         let combo = Shortcut(keyCode: 48, modifiers: CGEventFlags.maskCommand.rawValue) // cmd+tab
         map[.middlePinch] = .shortcut(combo)
-        var r = GestureRecognizer(map: map)
+        var r = GestureRecognizer(config: .instant, map: map)
         var actions: [Action] = []
         for (i, hand) in [PoseFixtures.pinched(.middleTip), PoseFixtures.pinched(.middleTip), PoseFixtures.openHand()].enumerated() {
             actions += r.update(hands: [hand], at: Double(i) * dt).actions
@@ -40,7 +40,7 @@ final class GestureMapTests: XCTestCase {
     func testFistMappedToButtonDragsAndReleases() {
         var map = GestureMap.standard
         map[.fist] = .leftButton
-        var r = GestureRecognizer(map: map)
+        var r = GestureRecognizer(config: .instant, map: map)
         let down = r.update(hands: [PoseFixtures.fist()], at: 0)
         XCTAssertEqual(down.actions, [.leftDown(clickCount: 1)])
         XCTAssertEqual(down.mode, .drag)
@@ -51,7 +51,7 @@ final class GestureMapTests: XCTestCase {
     func testUnboundIndexPinchLeavesMiddlePinchFree() {
         var map = GestureMap.standard
         map[.indexPinch] = .none
-        var r = GestureRecognizer(map: map)
+        var r = GestureRecognizer(config: .instant, map: map)
         // A plain index pinch now does nothing at all.
         XCTAssertTrue(r.update(hands: [PoseFixtures.pinched()], at: 0).actions.isEmpty)
         XCTAssertEqual(r.update(hands: [PoseFixtures.openHand()], at: dt).actions, [])
@@ -61,7 +61,7 @@ final class GestureMapTests: XCTestCase {
     func testPauseGestureSoftPausesAndTheSameGestureResumes() {
         var map = GestureMap.standard
         map[.littlePinch] = .pauseTracking
-        var r = GestureRecognizer(map: map)
+        var r = GestureRecognizer(config: .instant, map: map)
         let paused = r.update(hands: [PoseFixtures.pinched(.littleTip)], at: 0)
         XCTAssertEqual(paused.events, [.paused])
         XCTAssertTrue(paused.actions.isEmpty)
@@ -80,7 +80,7 @@ final class GestureMapTests: XCTestCase {
     func testOneHandedZoomUsesVerticalTravel() {
         var map = GestureMap.standard
         map[.fist] = .zoom
-        var r = GestureRecognizer(map: map)
+        var r = GestureRecognizer(config: .instant, map: map)
         _ = r.update(hands: [PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.3))], at: 0)
         let out = r.update(hands: [PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.32))], at: dt)
         guard case .zoom(let delta) = out.actions.first else { return XCTFail("\(out.actions)") }
@@ -96,7 +96,7 @@ final class GestureMapTests: XCTestCase {
     }
 
     func testLabelNamesTriggerAndAction() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         XCTAssertEqual(r.update(hands: [PoseFixtures.pinched()], at: 0).label, "Thumb + index pinch: Click / drag")
         XCTAssertEqual(r.update(hands: [PoseFixtures.openHand()], at: 1).label, "Move")
     }
@@ -107,22 +107,22 @@ final class DisplayTargetTests: XCTestCase {
     let right = CGRect(x: 1920, y: -200, width: 2560, height: 1440)
 
     func testAllDisplaysIsTheUnion() {
-        let r = Engine.targetScreen(mode: .all, displays: [main, right], current: .zero)
+        let r = FramePipeline.targetScreen(mode: .all, displays: [main, right], current: .zero)
         XCTAssertEqual(r, CGRect(x: 0, y: -200, width: 4480, height: 1440))
     }
 
     func testMainIsTheDisplayAtOrigin() {
-        XCTAssertEqual(Engine.targetScreen(mode: .main, displays: [right, main], current: .zero), main)
+        XCTAssertEqual(FramePipeline.targetScreen(mode: .main, displays: [right, main], current: .zero), main)
     }
 
     func testFollowCursorPicksTheDisplayUnderTheCursor() {
-        let r = Engine.targetScreen(mode: .followCursor, displays: [main, right], current: main,
+        let r = FramePipeline.targetScreen(mode: .followCursor, displays: [main, right], current: main,
                                     cursor: CGPoint(x: 3000, y: 100))
         XCTAssertEqual(r, right)
     }
 
     func testFollowCursorKeepsCurrentWithoutACursorSample() {
-        XCTAssertEqual(Engine.targetScreen(mode: .followCursor, displays: [main, right], current: right), right)
-        XCTAssertEqual(Engine.targetScreen(mode: .followCursor, displays: [main, right], current: .zero), main)
+        XCTAssertEqual(FramePipeline.targetScreen(mode: .followCursor, displays: [main, right], current: right), right)
+        XCTAssertEqual(FramePipeline.targetScreen(mode: .followCursor, displays: [main, right], current: .zero), main)
     }
 }

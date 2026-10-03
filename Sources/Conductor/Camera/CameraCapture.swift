@@ -62,10 +62,11 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 
     /// Swaps the camera on a configured session without stopping it. Runs on the camera queue so it
     /// can't interleave with start and stop.
-    func switchDevice(to deviceID: String?) {
+    /// Resolve the device on the caller's thread (`preferredDevice`): discovery can be slow, and
+    /// this queue also carries frames.
+    func switchDevice(to device: AVCaptureDevice?) {
         queue.async { [self] in
-            guard configured, let device = Self.preferredDevice(id: deviceID),
-                  device.uniqueID != input?.device.uniqueID,
+            guard configured, let device, device.uniqueID != input?.device.uniqueID,
                   let newInput = try? AVCaptureDeviceInput(device: device) else { return }
             session.beginConfiguration()
             if let input { session.removeInput(input) }

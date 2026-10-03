@@ -53,7 +53,7 @@ struct GestureSettingsView: View {
                 Caption("Holds Right ⌘, LocalFlow's dictation key, for as long as you pinch. Any push-to-talk app works the same way: pick Hold a key for a gesture and record that app's key. Pressing a modifier on its own records just that key.")
             }
             Section {
-                Caption("Only one trigger is active at a time. Both hands beat a fist, a fist beats a pinch, and among pinches the fingertip closest to the thumb wins. Scroll and zoom on a one-handed trigger use up and down hand travel. For swipes, raise index and middle fingers with the others curled, then flick sideways; the cursor holds still in that pose.")
+                Caption("Only one trigger is active at a time. Both hands beat a fist, a fist beats a pinch, and among pinches the fingertip closest to the thumb wins. Scroll and zoom on a one-handed trigger use up and down hand travel. With index and middle fingers raised and the others curled, the cursor holds still: moving the hand up or down drives that pose's binding (scroll by default), and a quick sideways flick swipes.")
                 HStack {
                     Spacer()
                     Button("Reset bindings") { setMap(.standard) }

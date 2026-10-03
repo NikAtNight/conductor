@@ -3,7 +3,7 @@ import CoreGraphics
 
 /// Something the hand can do that Conductor detects.
 enum Trigger: String, CaseIterable, Codable, Identifiable {
-    case indexPinch, middlePinch, ringPinch, littlePinch, fist, twoHandPinch, swipeLeft, swipeRight
+    case indexPinch, middlePinch, ringPinch, littlePinch, fist, twoHandPinch, swipeLeft, swipeRight, twoFingers
 
     var id: String { rawValue }
 
@@ -17,6 +17,7 @@ enum Trigger: String, CaseIterable, Codable, Identifiable {
         case .twoHandPinch: return "Both hands pinched"
         case .swipeLeft: return "Two-finger swipe left"
         case .swipeRight: return "Two-finger swipe right"
+        case .twoFingers: return "Two fingers, move up or down"
         }
     }
 
@@ -27,7 +28,7 @@ enum Trigger: String, CaseIterable, Codable, Identifiable {
         case .middlePinch: return .middleTip
         case .ringPinch: return .ringTip
         case .littlePinch: return .littleTip
-        case .fist, .twoHandPinch, .swipeLeft, .swipeRight: return nil
+        case .fist, .twoHandPinch, .swipeLeft, .swipeRight, .twoFingers: return nil
         }
     }
 
@@ -138,6 +139,7 @@ struct GestureMap: Codable, Equatable {
         // Like a trackpad: swipe right goes back, swipe left goes forward.
         .swipeRight: .shortcut(Shortcut(keyCode: 33, modifiers: CGEventFlags.maskCommand.rawValue)), // ⌘[
         .swipeLeft: .shortcut(Shortcut(keyCode: 30, modifiers: CGEventFlags.maskCommand.rawValue)),  // ⌘]
+        .twoFingers: .scroll,
     ])
 
     subscript(_ trigger: Trigger) -> GestureAction {

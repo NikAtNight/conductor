@@ -8,7 +8,7 @@ final class HoldKeyTests: XCTestCase {
     private func recognizer() -> GestureRecognizer {
         var map = GestureMap.standard
         map[.ringPinch] = .holdKey(rightCommand)
-        return GestureRecognizer(map: map)
+        return GestureRecognizer(config: .instant, map: map)
     }
 
     func testKeyIsHeldForExactlyAsLongAsThePinch() {
@@ -37,7 +37,8 @@ final class HoldKeyTests: XCTestCase {
     func testASwipeBoundToHoldKeyTapsIt() {
         var map = GestureMap.standard
         map[.swipeLeft] = .holdKey(rightCommand)
-        var r = GestureRecognizer(map: map)
+        map[.twoFingers] = .none // the pose would also scroll by palm travel
+        var r = GestureRecognizer(config: .instant, map: map)
         var actions: [GestureRecognizer.Action] = []
         for i in 0...6 {
             let x = 0.35 + 0.25 * CGFloat(i) / 6

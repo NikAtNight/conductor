@@ -12,6 +12,12 @@ final class SwipeTests: XCTestCase {
         XCTAssertFalse(PoseFixtures.fist().isTwoFingerPose)
     }
 
+    /// Two fingers also scroll by palm travel. These moves are level, so the deltas are all zero;
+    /// drop them to look at the swipes alone.
+    private func withoutScroll(_ actions: [GestureRecognizer.Action]) -> [GestureRecognizer.Action] {
+        actions.filter { if case .scroll = $0 { return false } else { return true } }
+    }
+
     /// Moves the two-finger hand from x0 to x1 (Vision space) over `duration` and collects actions.
     private func swipe(from x0: CGFloat, to x1: CGFloat, duration: TimeInterval,
                        recognizer r: inout GestureRecognizer) -> [GestureRecognizer.Action] {
@@ -23,32 +29,32 @@ final class SwipeTests: XCTestCase {
             if i >= GestureRecognizer.poseFrames - 1 {
                 XCTAssertNil(out.pointer, "cursor holds still once the two-finger pose is held")
             }
-            actions += out.actions
+            actions += withoutScroll(out.actions)
         }
         return actions
     }
 
     func testQuickFlickToTheUsersRightGoesBackOnce() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         // Mirrored: the user's right is Vision's smaller x.
         XCTAssertEqual(swipe(from: 0.6, to: 0.35, duration: 0.2, recognizer: &r), [.shortcut(back)])
     }
 
     func testQuickFlickToTheUsersLeftGoesForward() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         XCTAssertEqual(swipe(from: 0.35, to: 0.6, duration: 0.2, recognizer: &r), [.shortcut(forward)])
     }
 
     func testSlowDriftIsNotASwipe() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         XCTAssertEqual(swipe(from: 0.35, to: 0.6, duration: 2.0, recognizer: &r), [])
     }
 
     func testAOneFrameFlickerOutOfThePoseCannotSwipeTwice() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         var actions: [GestureRecognizer.Action] = []
         var t = 0.0
-        func frame(_ hand: HandPose) { actions += r.update(hands: [hand], at: t).actions; t += dt }
+        func frame(_ hand: HandPose) { actions += withoutScroll(r.update(hands: [hand], at: t).actions); t += dt }
         for i in 0...6 { frame(PoseFixtures.twoFingers(at: CGPoint(x: 0.6 - 0.25 * CGFloat(i) / 6, y: 0.3))) }
         frame(PoseFixtures.openHand(at: CGPoint(x: 0.35, y: 0.3)))       // one bad frame
         for i in 0...6 { frame(PoseFixtures.twoFingers(at: CGPoint(x: 0.35 + 0.25 * CGFloat(i) / 6, y: 0.3))) }
@@ -56,7 +62,7 @@ final class SwipeTests: XCTestCase {
     }
 
     func testABriefPassThroughThePoseDoesNotSwipe() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         var actions: [GestureRecognizer.Action] = []
         for i in 0..<2 {
             actions += r.update(hands: [PoseFixtures.twoFingers(at: CGPoint(x: 0.6 - 0.15 * CGFloat(i), y: 0.3))], at: Double(i) * dt).actions
@@ -65,11 +71,12 @@ final class SwipeTests: XCTestCase {
         XCTAssertEqual(actions, [])
     }
 
-    func testUnboundSwipesLeaveThePoseAlone() {
+    func testAnUnboundPoseLeavesTheCursorAlone() {
         var map = GestureMap.standard
         map[.swipeLeft] = .none
         map[.swipeRight] = .none
-        var r = GestureRecognizer(map: map)
+        map[.twoFingers] = .none
+        var r = GestureRecognizer(config: .instant, map: map)
         XCTAssertNotNil(r.update(hands: [PoseFixtures.twoFingers()], at: 0).pointer)
     }
 
@@ -185,32 +192,60 @@ final class PrecisionPointerTests: XCTestCase {
     }
 }
 
-final class MomentumScrollerTests: XCTestCase {
+final class ScrollPolicyTests: XCTestCase {
+    let dt = 1.0 / 30
+    var p = ScrollPolicy()
+    var t = 0.0
+
+    /// Scroll gesture frames with this much hand travel each, then release frames until the coast
+    /// ends. Returns the pixels posted after release.
+    private func flick(travel: CGFloat, frames: Int = 4) -> [Int32] {
+        for _ in 0..<frames {
+            _ = p.pixels(travel: travel, scrolling: true, interrupted: false, at: t)
+            t += dt
+        }
+        var steps: [Int32] = []
+        for _ in 0..<120 {
+            if let px = p.pixels(travel: nil, scrolling: false, interrupted: false, at: t) { steps.append(px) }
+            t += dt
+        }
+        return steps
+    }
+
+    func testLiveScrollingFollowsTheHandWithNaturalDirection() {
+        XCTAssertEqual(p.pixels(travel: 0.01, scrolling: true, interrupted: false, at: 0), -40)
+        p.gain = 2
+        XCTAssertEqual(p.pixels(travel: -0.01, scrolling: true, interrupted: false, at: dt), 80)
+    }
+
     func testAFlickCoastsAndSlowsToAStop() {
-        var m = MomentumScroller()
-        for _ in 0..<4 { m.scrolled(-40) }
-        m.released()
-        var steps: [CGFloat] = []
-        while let step = m.tick() { steps.append(step) }
+        let steps = flick(travel: 0.01) // 40 px per frame
         XCTAssertEqual(steps.first, -40)
-        XCTAssertTrue(zip(steps, steps.dropFirst()).allSatisfy { abs($1) < abs($0) }, "always slowing")
+        XCTAssertTrue(zip(steps, steps.dropFirst()).allSatisfy { abs($1) <= abs($0) }, "always slowing")
         XCTAssertGreaterThan(steps.count, 10)
         XCTAssertLessThan(steps.count, 60)
     }
 
     func testAGentleScrollDoesNotCoast() {
-        var m = MomentumScroller()
-        for _ in 0..<4 { m.scrolled(3) }
-        m.released()
-        XCTAssertNil(m.tick())
+        XCTAssertEqual(flick(travel: 0.001), [])
     }
 
-    func testStopEndsCoasting() {
-        var m = MomentumScroller()
-        for _ in 0..<4 { m.scrolled(30) }
-        m.released()
-        _ = m.tick()
-        m.stop()
-        XCTAssertNil(m.tick())
+    func testAnInterruptionEndsTheCoast() {
+        for _ in 0..<4 { _ = p.pixels(travel: 0.01, scrolling: true, interrupted: false, at: t); t += dt }
+        XCTAssertNotNil(p.pixels(travel: nil, scrolling: false, interrupted: false, at: t)); t += dt
+        XCTAssertNil(p.pixels(travel: nil, scrolling: false, interrupted: true, at: t)); t += dt
+        XCTAssertNil(p.pixels(travel: nil, scrolling: false, interrupted: false, at: t))
+    }
+
+    func testMomentumOffStopsWithTheHand() {
+        p.momentum = false
+        XCTAssertEqual(flick(travel: 0.01), [])
+    }
+
+    func testAStallDoesNotBecomeOneGiantStep() {
+        for _ in 0..<4 { _ = p.pixels(travel: 0.01, scrolling: true, interrupted: false, at: t); t += dt }
+        _ = p.pixels(travel: nil, scrolling: false, interrupted: false, at: t)
+        let afterStall = p.pixels(travel: nil, scrolling: false, interrupted: false, at: t + 2)
+        XCTAssertLessThanOrEqual(abs(afterStall ?? 0), 40 * 3)
     }
 }

@@ -107,6 +107,12 @@ struct GestureRecognizer {
         /// A swipe is this much sideways palm travel (frame units) within `swipeWindow` seconds.
         var swipeDistance: CGFloat = 0.12
         var swipeWindow: TimeInterval = 0.3
+        /// Seconds a pinch must hold before it engages, so a fingertip passing the thumb doesn't
+        /// click. 0.06 is the third frame at 30 fps.
+        var pinchHold: TimeInterval = 0.06
+        /// A pinch can't start while its finger looks shorter than this, in palm widths. Aimed at
+        /// the lens, the camera can't tell whether the fingertip touches the thumb.
+        var minimumFingerLength: CGFloat = 0.5
     }
 
     var config: Config
@@ -142,10 +148,13 @@ struct GestureRecognizer {
     private var swipeTrail: [(time: TimeInterval, x: CGFloat)] = []
     /// One swipe per pose: set after a swipe fires, cleared when the pose ends.
     private var swipeFired = false
-    private var inSwipeMode = false
+    /// The two-finger pose, debounced (see trackTwoFingerPose).
+    private var twoFingersHeld = false
     private var posedFrames = 0
     private var unposedFrames = 0
-    /// Consecutive frames needed to enter or leave swipe mode.
+    /// The pinch that's closed this frame and when it closed, whether or not it engaged.
+    private var pinchSince: (trigger: Trigger, time: TimeInterval)?
+    /// Consecutive frames needed to start or end the two-finger pose.
     static let poseFrames = 3
 
     init(config: Config = Config(), map: GestureMap = .standard) {
@@ -171,6 +180,18 @@ struct GestureRecognizer {
         self = GestureRecognizer(config: config, map: map)
     }
 
+    /// Lets go of anything held, for when the real input was released behind our back (a camera
+    /// stall), without giving up control or ending a pause. The returned actions mirror the release.
+    mutating func releaseHeld() -> [Action] {
+        resetSwipe()
+        // Time kept passing during the stall; a dwell measured across it would click at once.
+        dwellAnchor = nil
+        dwellRearm = true
+        // A trigger that is pausing, or just resumed, stays accounted for so the stall can't flip it.
+        if let held = active, map[held] == .pauseTracking { return [] }
+        return deactivate(at: -1, asClick: false)
+    }
+
     mutating func update(hands: [HandPose], at time: TimeInterval) -> Output {
         events.removeAll()
         guard let primary = Self.primaryHand(hands, prefer: config.mainHand) else {
@@ -187,6 +208,8 @@ struct GestureRecognizer {
         }
         lostFrames = 0
         lastSeen = time
+        trackPinch(primary, at: time)
+        trackTwoFingerPose(primary)
 
         let other = hands.count >= 2
             ? (hands.first { $0 != primary && $0.chirality != primary.chirality } ?? hands.first { $0 != primary })
@@ -250,7 +273,7 @@ struct GestureRecognizer {
             if !isEngaged(held, primary: primary, other: other, holding: true) { pauseHeld = nil }
         } else if let trigger = Trigger.allCases.first(where: {
             map[$0] == .pauseTracking && isEngaged($0, primary: primary, other: other, holding: false)
-        }) {
+        }), heldLongEnough(trigger, at: time) {
             isPaused = false
             hasControl = true
             // Treat the resuming trigger as held so it doesn't pause again until released.
@@ -270,15 +293,8 @@ struct GestureRecognizer {
         // Already in control, so turning the ready pose on later doesn't kick you out.
         if !config.requireReadyPose { hasControl = true }
 
-        // Swipe mode needs the pose for a few frames to start and its absence for a few to end, so a
-        // loose hand passing through the pose doesn't swipe and a one-frame flicker can't fire twice.
-        let pose = primary.isTwoFingerPose
-        if pose { posedFrames += 1; unposedFrames = 0 } else { unposedFrames += 1; posedFrames = 0 }
-        let swipeBound = Trigger.swipes.contains { map[$0] != .none }
-        inSwipeMode = swipeBound && active == nil
-            && (inSwipeMode ? unposedFrames < Self.poseFrames : posedFrames >= Self.poseFrames)
-        if inSwipeMode {
-            return swipeUpdate(primary: primary, posed: pose, at: time)
+        if twoFingersHeld, active == nil || active == .twoFingers {
+            return twoFingerUpdate(primary: primary, other: other, posed: primary.isTwoFingerPose, at: time)
         }
         resetSwipe()
         var actions: [Action] = []
@@ -292,7 +308,7 @@ struct GestureRecognizer {
         // Pick a new trigger, or let a higher-priority one preempt. Order: two hands, fist, then the
         // pinch whose fingertip is closest to the thumb. A preempted button is released, not clicked.
         var justActivated = false
-        if let next = chooseTrigger(primary: primary, other: other), next != active {
+        if let next = chooseTrigger(primary: primary, other: other, at: time), next != active {
             if active != nil { actions += deactivate(at: time, asClick: false) }
             actions += activate(next, primary: primary, other: other, at: time)
             justActivated = true
@@ -325,18 +341,47 @@ struct GestureRecognizer {
         return output(mode, pointer: pointer, actions: actions, label: label, feedback: feedback)
     }
 
-    // MARK: Swipes
+    // MARK: Two fingers
 
-    /// Two-finger pose: the cursor holds still, and a quick sideways flick fires a swipe trigger.
-    private mutating func swipeUpdate(primary: HandPose, posed: Bool, at time: TimeInterval) -> Output {
+    /// Two-finger pose: the cursor holds still. Hand travel up and down drives the pose's own
+    /// binding, scroll by default, and a quick sideways flick fires a swipe.
+    private mutating func twoFingerUpdate(primary: HandPose, other: HandPose?, posed: Bool, at time: TimeInterval) -> Output {
         dwellAnchor = nil
         dwellRearm = true
-        mode = .swipe
-        guard posed, let trigger = detectSwipe(primary, at: time) else {
-            return output(.swipe, pointer: nil, actions: [], label: Mode.swipe.rawValue)
+        var actions: [Action] = []
+        var justActivated = false
+        if map[.twoFingers] != .none, active != .twoFingers {
+            actions += activate(.twoFingers, primary: primary, other: other, at: time)
+            justActivated = true
+            if isPaused {
+                mode = .paused
+                return output(.paused, pointer: nil, actions: actions, label: "Paused: \(Trigger.twoFingers.title) to resume")
+            }
         }
-        return output(.swipe, pointer: nil, actions: tapActions(for: trigger), label: trigger.title)
+        if posed, let swipe = detectSwipe(primary, at: time) {
+            actions += tapActions(for: swipe)
+            if isPaused {
+                // Pausing can't leave the pose's own binding held.
+                actions += deactivate(at: time, asClick: false)
+                mode = .paused
+                return output(.paused, pointer: nil, actions: actions, label: "Paused: \(swipe.title) to resume")
+            }
+            mode = .swipe
+            return output(.swipe, pointer: nil, actions: actions, label: swipe.title)
+        }
+        if active == .twoFingers, !justActivated {
+            actions += motion(for: .twoFingers, primary: primary, other: other)
+        }
+        guard active == .twoFingers else {
+            mode = .swipe
+            return output(.swipe, pointer: nil, actions: actions, label: Mode.swipe.rawValue)
+        }
+        let action = map[.twoFingers]
+        mode = Self.mode(for: action)
+        return output(mode, pointer: nil, actions: actions, label: "\(Trigger.twoFingers.title): \(action.title)")
     }
+
+    // MARK: Swipes
 
     /// Tracks the palm while in the two-finger pose and reports a swipe once per pose.
     private mutating func detectSwipe(_ hand: HandPose, at time: TimeInterval) -> Trigger? {
@@ -415,7 +460,7 @@ struct GestureRecognizer {
     private func pinchFeedback(_ hand: HandPose) -> CGFloat {
         if let active, active.fingertip != nil, map[active].shape != .motion { return 1 }
         let distances = Trigger.pinches
-            .filter { map[$0] != .none && map[$0].shape != .motion }
+            .filter { map[$0] != .none && map[$0].shape != .motion && pinchCanStart(hand, $0.fingertip!) }
             .map { pinchDistance(hand, $0.fingertip!) }
         guard let nearest = distances.min(), config.pinchRelease > config.pinchEngage else { return 0 }
         return ((config.pinchRelease - nearest) / (config.pinchRelease - config.pinchEngage)).clamped(to: 0...1)
@@ -434,12 +479,16 @@ struct GestureRecognizer {
         case .swipeLeft, .swipeRight:
             // Swipes are momentary; they can't be "held" and can't resume a pause.
             return false
+        case .twoFingers:
+            return twoFingersHeld
         case .indexPinch, .middlePinch, .ringPinch, .littlePinch:
+            // Only starting a pinch needs a clear view of the finger. A held one stays held.
             return pinchDistance(primary, trigger.fingertip!) < threshold
+                && (holding || pinchCanStart(primary, trigger.fingertip!))
         }
     }
 
-    private func chooseTrigger(primary: HandPose, other: HandPose?) -> Trigger? {
+    private func chooseTrigger(primary: HandPose, other: HandPose?, at time: TimeInterval) -> Trigger? {
         let bound: (Trigger) -> Bool = { self.map[$0] != .none }
         if bound(.twoHandPinch), isEngaged(.twoHandPinch, primary: primary, other: other, holding: active == .twoHandPinch) {
             return .twoHandPinch
@@ -448,14 +497,55 @@ struct GestureRecognizer {
         if bound(.fist), primary.isFist { return .fist }
         if active == .fist { return nil }
         if active != nil { return nil } // a held pinch is never swapped for a sibling pinch
-        let candidates = Trigger.pinches.filter(bound)
-            .map { ($0, pinchDistance(primary, $0.fingertip!)) }
+        guard let pinch = pinchSince?.trigger, heldLongEnough(pinch, at: time) else { return nil }
+        return pinch
+    }
+
+    /// The bound pinch closed this frame: the one whose fingertip is nearest the thumb.
+    private func closedPinch(_ hand: HandPose) -> Trigger? {
+        Trigger.pinches
+            .filter { map[$0] != .none && pinchCanStart(hand, $0.fingertip!) }
+            .map { ($0, pinchDistance(hand, $0.fingertip!)) }
             .filter { $0.1 < config.pinchEngage }
-        return candidates.min { $0.1 < $1.1 }?.0
+            .min { $0.1 < $1.1 }?.0
+    }
+
+    /// Remembers when the closed pinch closed. Runs every frame with a hand, in every state, so a
+    /// pinch that resumes from a pause waits just as long as one that engages.
+    private mutating func trackPinch(_ hand: HandPose, at time: TimeInterval) {
+        if let pinch = closedPinch(hand) {
+            if pinchSince?.trigger != pinch { pinchSince = (pinch, time) }
+        } else {
+            pinchSince = nil
+        }
+    }
+
+    /// Debounces the two-finger pose: a few frames to start and a few missing to end, so a loose
+    /// hand passing through it doesn't scroll or swipe and a one-frame flicker can't fire twice.
+    /// Runs in every state, so letting go of the pose while paused is noticed.
+    private mutating func trackTwoFingerPose(_ hand: HandPose) {
+        if hand.isTwoFingerPose { posedFrames += 1; unposedFrames = 0 } else { unposedFrames += 1; posedFrames = 0 }
+        let bound = map[.twoFingers] != .none || Trigger.swipes.contains { map[$0] != .none }
+        twoFingersHeld = bound && (twoFingersHeld ? unposedFrames < Self.poseFrames : posedFrames >= Self.poseFrames)
+    }
+
+    /// Whether a pinch has held `pinchHold`. Other triggers don't wait.
+    private func heldLongEnough(_ trigger: Trigger, at time: TimeInterval) -> Bool {
+        guard Trigger.pinches.contains(trigger) else { return true }
+        guard let since = pinchSince, since.trigger == trigger else { return false }
+        return time - since.time >= config.pinchHold
     }
 
     private func pinchDistance(_ hand: HandPose, _ fingertip: HandJoint) -> CGFloat {
         hand.normalizedDistance(.thumbTip, fingertip) ?? .infinity
+    }
+
+    /// False when the finger points at the camera, where its tip can cover the thumb in the
+    /// picture without touching it. Also false for a middle, ring or little pinch while those three
+    /// are curled into the palm: pointing rests the thumb on them anyway.
+    private func pinchCanStart(_ hand: HandPose, _ fingertip: HandJoint) -> Bool {
+        (fingertip == .indexTip || !hand.othersCurled)
+            && (hand.visibleLength(of: fingertip) ?? 0) >= config.minimumFingerLength
     }
 
     // MARK: Activation
@@ -560,6 +650,11 @@ struct GestureRecognizer {
     private mutating func lose() -> Output {
         let actions = deactivate(at: -1, asClick: false)
         pauseHeld = nil
+        pinchSince = nil
+        twoFingersHeld = false
+        posedFrames = 0
+        unposedFrames = 0
+        resetSwipe()
         readyStart = nil
         dwellAnchor = nil
         mode = .idle

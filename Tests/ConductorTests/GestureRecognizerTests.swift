@@ -17,7 +17,7 @@ final class GestureRecognizerTests: XCTestCase {
     }
 
     func testOpenHandMovesPointerWithoutActions() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         let out = r.update(hands: [PoseFixtures.openHand()], at: 0)
         XCTAssertEqual(out.mode, .point)
         XCTAssertNotNil(out.pointer)
@@ -25,14 +25,14 @@ final class GestureRecognizerTests: XCTestCase {
     }
 
     func testPinchAndReleaseIsOneClick() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         let actions = run([[PoseFixtures.openHand()], [PoseFixtures.pinched()], [PoseFixtures.pinched()], [PoseFixtures.openHand()]],
                           recognizer: &r)
         XCTAssertEqual(actions, [.leftDown(clickCount: 1), .leftUp(clickCount: 1)])
     }
 
     func testTwoQuickPinchesAreDoubleClick() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         let frames: [[HandPose]] = [[PoseFixtures.pinched()], [PoseFixtures.openHand()],
                                     [PoseFixtures.pinched()], [PoseFixtures.openHand()]]
         let actions = run(frames, recognizer: &r)
@@ -41,7 +41,7 @@ final class GestureRecognizerTests: XCTestCase {
     }
 
     func testSlowSecondPinchIsSingleClick() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         _ = r.update(hands: [PoseFixtures.pinched()], at: 0)
         _ = r.update(hands: [PoseFixtures.openHand()], at: 0.1)
         let out = r.update(hands: [PoseFixtures.pinched()], at: 1.0)
@@ -49,7 +49,7 @@ final class GestureRecognizerTests: XCTestCase {
     }
 
     func testHysteresisIgnoresSmallWobbleWhilePinched() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         _ = r.update(hands: [PoseFixtures.pinched()], at: 0)
         // Tips drift to 0.45 hand scales apart: above engage (0.35), below release (0.55).
         var wobble = PoseFixtures.openHand()
@@ -61,7 +61,7 @@ final class GestureRecognizerTests: XCTestCase {
     }
 
     func testPointerFreezesAtPinchThenDragsWithoutJump() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         let start = r.update(hands: [PoseFixtures.pinched()], at: 0).pointer!
         // Tiny tremor stays frozen.
         let tremor = PoseFixtures.pinched(at: CGPoint(x: 0.503, y: 0.3))
@@ -77,14 +77,14 @@ final class GestureRecognizerTests: XCTestCase {
     }
 
     func testMiddlePinchIsRightClickOnce() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         let frames: [[HandPose]] = [[PoseFixtures.openHand()], [PoseFixtures.pinched(.middleTip)],
                                     [PoseFixtures.pinched(.middleTip)], [PoseFixtures.openHand()]]
         XCTAssertEqual(run(frames, recognizer: &r), [.rightClick])
     }
 
     func testLosingHandReleasesHeldButton() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         _ = r.update(hands: [PoseFixtures.pinched()], at: 0)
         var actions: [Action] = []
         for i in 1...6 { actions += r.update(hands: [], at: Double(i) * dt).actions }
@@ -93,7 +93,7 @@ final class GestureRecognizerTests: XCTestCase {
     }
 
     func testBriefDropoutKeepsDrag() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         _ = r.update(hands: [PoseFixtures.pinched()], at: 0)
         let dropped = r.update(hands: [], at: dt)
         XCTAssertEqual(dropped.mode, .drag)
@@ -103,7 +103,7 @@ final class GestureRecognizerTests: XCTestCase {
     }
 
     func testFistScrollsByPalmTravel() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         _ = r.update(hands: [PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.3))], at: 0)
         let out = r.update(hands: [PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.34))], at: dt)
         XCTAssertEqual(out.mode, .scroll)
@@ -116,14 +116,14 @@ final class GestureRecognizerTests: XCTestCase {
     }
 
     func testFistDuringDragReleasesButton() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         _ = r.update(hands: [PoseFixtures.pinched()], at: 0)
         let out = r.update(hands: [PoseFixtures.fist()], at: dt)
         XCTAssertEqual(out.actions, [.leftUp(clickCount: 1)])
     }
 
     func testTwoPinchedHandsZoomBySpread() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         var left = PoseFixtures.pinched(at: CGPoint(x: 0.3, y: 0.3))
         left.chirality = .left
         let right = PoseFixtures.pinched(at: CGPoint(x: 0.6, y: 0.3))
@@ -137,7 +137,7 @@ final class GestureRecognizerTests: XCTestCase {
     }
 
     func testZoomDoesNotArmDoubleClick() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         var left = PoseFixtures.pinched(at: CGPoint(x: 0.3, y: 0.3))
         left.chirality = .left
         _ = r.update(hands: [PoseFixtures.pinched()], at: 0)          // left down
@@ -157,12 +157,12 @@ final class PinchDisambiguationTests: XCTestCase {
         // Both within engage range (gap between tips is 0.45 hand scales).
         XCTAssertLessThan(hand.normalizedDistance(.thumbTip, .indexTip)!, 0.35)
         XCTAssertLessThan(hand.normalizedDistance(.thumbTip, .middleTip)!, 0.35)
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         XCTAssertEqual(r.update(hands: [hand], at: 0).actions, [.rightClick])
     }
 
     func testIndexPinchDoesNotAlsoRightClick() {
-        var r = GestureRecognizer()
+        var r = GestureRecognizer(config: .instant)
         let actions = r.update(hands: [PoseFixtures.pinched()], at: 0).actions
         XCTAssertEqual(actions, [.leftDown(clickCount: 1)])
     }
