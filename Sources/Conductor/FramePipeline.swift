@@ -50,6 +50,7 @@ struct FramePipeline {
     private var cameraMount: (x: CGFloat, display: CGRect) = (0, .zero)
     private var inputAllowed = false
     private var wasIdle = true
+    private var wasScrollMode = false
     private var lastPosted = CGPoint(x: -1, y: -1)
     private var relativeCursor: CGPoint = .zero
     private var zoomAccumulator: CGFloat = 0
@@ -128,6 +129,7 @@ struct FramePipeline {
         relative.reset()
         precision.reset()
         wasIdle = true
+        wasScrollMode = false
         lastPosted = CGPoint(x: -1, y: -1)
     }
 
@@ -190,10 +192,14 @@ struct FramePipeline {
             commands += self.commands(for: action)
         }
         // Momentum: a scroll that ends mid-flick keeps going and slows down. A click, a new gesture,
-        // or a pause stops it.
+        // or a pause stops it. Scroll mode never coasts: the page stops when it ends, hand or not.
+        let inScrollMode = recognized.mode == .scrollMode
+        defer { wasScrollMode = inScrollMode }
         let interrupted = recognized.actions.contains(where: \.interruptsScrolling)
             || recognized.mode == .drag || recognized.mode == .zoom || recognized.mode == .paused || recognizer.isPaused
-        if let dy = scroll.pixels(travel: travel, scrolling: recognized.mode == .scroll, interrupted: interrupted, at: time) {
+            || (wasScrollMode && !inScrollMode)
+        let scrolling = recognized.mode == .scroll || inScrollMode
+        if let dy = scroll.pixels(travel: travel, scrolling: scrolling, interrupted: interrupted, at: time) {
             commands.append(.scroll(dy: dy, flags: []))
         }
         return Output(recognized: recognized, cursor: cursor, commands: commands)

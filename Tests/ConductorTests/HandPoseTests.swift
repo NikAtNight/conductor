@@ -39,6 +39,15 @@ enum PoseFixtures {
         return hand
     }
 
+    /// Two fingers up with the index crossed over the middle: its tip lands on the little-finger
+    /// side of the middle tip.
+    static func crossed(at wrist: CGPoint = CGPoint(x: 0.5, y: 0.3)) -> HandPose {
+        var hand = twoFingers(at: wrist)
+        hand.joints[.indexTip] = CGPoint(x: wrist.x + 0.012, y: wrist.y + 0.20)
+        hand.joints[.middleTip] = CGPoint(x: wrist.x - 0.01, y: wrist.y + 0.215)
+        return hand
+    }
+
     /// Index out, the others curled. `bend` 0 is the index straight up; 1 curls its tip down below
     /// the knuckle, which also makes the hand a fist. `tuckedThumb` rests the thumb where the
     /// curled index tip lands.

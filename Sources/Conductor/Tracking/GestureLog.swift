@@ -22,6 +22,8 @@ final class GestureLog {
         /// How long the index finger looks to the camera, in palm widths.
         var indexLength: Double?
         var othersCurled: Bool
+        /// Index tip past the middle tip, in palm widths. Positive is crossed.
+        var fingerCross: Double?
         var fist: Bool
         var openHand: Bool
     }
@@ -114,7 +116,8 @@ final class GestureLog {
         }
         return Measures(scale: pose.scale.map { round($0) }, palmWidth: pose.palmWidth.map { round($0) }, pinch: pinch,
                         indexLift: pose.indexLift.map { round($0) }, indexLength: pose.visibleLength(of: .indexTip).map { round($0) },
-                        othersCurled: pose.othersCurled, fist: pose.isFist, openHand: pose.isOpenHand)
+                        othersCurled: pose.othersCurled, fingerCross: pose.fingerCross.map { round($0) },
+                        fist: pose.isFist, openHand: pose.isOpenHand)
     }
 
     private static func round(_ value: CGFloat, places: Int = 4) -> Double {

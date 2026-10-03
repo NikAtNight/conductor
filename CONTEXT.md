@@ -56,6 +56,14 @@ _Avoid_: event, CGEvent
 The rules that turn scroll triggers into wheel pixels, keep a flick coasting, and decide what ends a coast.
 _Avoid_: momentum scroller, inertia
 
+**Scroll mode**:
+A state, switched on and off by a trigger bound to it, in which the relaxed hand scrolls by how far its knuckles sit above or below neutral, and no other trigger fires.
+_Avoid_: command mode, scroll lock
+
+**Neutral**:
+Where the knuckles settle just after scroll mode starts. Scroll mode measures from it, with a small dead zone around it.
+_Avoid_: center, origin
+
 **Momentum**:
 Scrolling that continues after the hand lets go mid-flick and slows to a stop.
 _Avoid_: inertia, kinetic scrolling

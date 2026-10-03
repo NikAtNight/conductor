@@ -65,6 +65,10 @@ struct HandPose: Equatable {
         return (tip.y - knuckle.y) / width
     }
 
+    /// Palm width over hand scale at or above which the palm faces the camera enough to read the
+    /// fingers' order. Face-on hands in recorded logs sit around 0.46; below 0.4 is the edge-on tenth.
+    static let facingCameraWidth: CGFloat = 0.4
+
     private static let fingerChains: [HandJoint: [HandJoint]] = [
         .indexTip: [.indexMCP, .indexPIP, .indexDIP, .indexTip],
         .middleTip: [.middleMCP, .middlePIP, .middleDIP, .middleTip],
@@ -79,6 +83,31 @@ struct HandPose: Equatable {
         guard points.count == keys.count else { return nil }
         let sum = points.reduce(CGPoint.zero) { CGPoint(x: $0.x + $1.x, y: $0.y + $1.y) }
         return CGPoint(x: sum.x / CGFloat(points.count), y: sum.y / CGFloat(points.count))
+    }
+
+    /// Average of the four finger knuckles. Rocking the hand at the wrist moves it about twice as far
+    /// as the palm center, so scroll mode measures from here.
+    var knuckleCenter: CGPoint? {
+        let keys: [HandJoint] = [.indexMCP, .middleMCP, .ringMCP, .littleMCP]
+        let points = keys.compactMap { self[$0] }
+        guard points.count == keys.count else { return nil }
+        let sum = points.reduce(CGPoint.zero) { CGPoint(x: $0.x + $1.x, y: $0.y + $1.y) }
+        return CGPoint(x: sum.x / 4, y: sum.y / 4)
+    }
+
+    /// How far the index fingertip sits past the middle fingertip toward the little finger, in palm
+    /// widths: positive with the fingers crossed, negative side by side. Measured along the knuckle
+    /// line, so it works for either hand at any roll. Nil when either finger is curled, since curled
+    /// tips bunch up and swap places by accident, and when the palm is turned edge-on to the camera,
+    /// where the fingertips line up one behind the other and jitter across each other.
+    var fingerCross: CGFloat? {
+        guard let index = self[.indexMCP], let little = self[.littleMCP], let width = palmWidth, width > 0,
+              let scale, width / scale >= Self.facingCameraWidth,
+              let indexTip = self[.indexTip], let middleTip = self[.middleTip],
+              !isCurled(.indexTip, .indexPIP), !isCurled(.middleTip, .middlePIP) else { return nil }
+        // Unit vector from the little knuckle toward the index knuckle.
+        let ax = (index.x - little.x) / width, ay = (index.y - little.y) / width
+        return ((middleTip.x - indexTip.x) * ax + (middleTip.y - indexTip.y) * ay) / width
     }
 
     /// True when all four fingers are straight and the thumb is out and away from the index finger.

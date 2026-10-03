@@ -3,7 +3,7 @@ import CoreGraphics
 
 /// Something the hand can do that Conductor detects.
 enum Trigger: String, CaseIterable, Codable, Identifiable {
-    case indexPinch, middlePinch, ringPinch, littlePinch, fist, twoHandPinch, swipeLeft, swipeRight, twoFingers
+    case indexPinch, middlePinch, ringPinch, littlePinch, fist, twoHandPinch, swipeLeft, swipeRight, twoFingers, crossedFingers
 
     var id: String { rawValue }
 
@@ -18,6 +18,7 @@ enum Trigger: String, CaseIterable, Codable, Identifiable {
         case .swipeLeft: return "Two-finger swipe left"
         case .swipeRight: return "Two-finger swipe right"
         case .twoFingers: return "Two fingers, move up or down"
+        case .crossedFingers: return "Index and middle crossed"
         }
     }
 
@@ -28,7 +29,7 @@ enum Trigger: String, CaseIterable, Codable, Identifiable {
         case .middlePinch: return .middleTip
         case .ringPinch: return .ringTip
         case .littlePinch: return .littleTip
-        case .fist, .twoHandPinch, .swipeLeft, .swipeRight, .twoFingers: return nil
+        case .fist, .twoHandPinch, .swipeLeft, .swipeRight, .twoFingers, .crossedFingers: return nil
         }
     }
 
@@ -64,6 +65,8 @@ enum GestureAction: Codable, Equatable, Hashable {
     case zoom
     case shortcut(Shortcut)
     case pauseTracking
+    /// Switches between pointing and scroll mode, where the relaxed hand scrolls from a neutral spot.
+    case scrollMode
     /// Holds a key down for as long as the trigger is held: push-to-talk.
     case holdKey(Shortcut)
 
@@ -73,7 +76,7 @@ enum GestureAction: Codable, Equatable, Hashable {
         switch self {
         case .none: return .inert
         case .leftButton, .holdKey: return .button
-        case .rightClick, .middleClick, .shortcut, .pauseTracking: return .tap
+        case .rightClick, .middleClick, .shortcut, .pauseTracking, .scrollMode: return .tap
         case .scroll, .zoom: return .motion
         }
     }
@@ -88,6 +91,7 @@ enum GestureAction: Codable, Equatable, Hashable {
         case .zoom: return "Zoom"
         case .shortcut(let s): return "Shortcut \(s.display)"
         case .pauseTracking: return "Pause / resume"
+        case .scrollMode: return "Scroll mode on / off"
         case .holdKey(let s): return "Hold \(s.display)"
         }
     }
@@ -96,7 +100,7 @@ enum GestureAction: Codable, Equatable, Hashable {
 
     /// The pickable kinds. Key actions carry no key here; the UI fills it in with the recorder.
     static let menuChoices: [GestureAction] = [
-        .leftButton, .rightClick, .middleClick, .scroll, .zoom, .shortcut(unsetKey), .holdKey(unsetKey), .pauseTracking, .none,
+        .leftButton, .rightClick, .middleClick, .scroll, .zoom, .shortcut(unsetKey), .holdKey(unsetKey), .scrollMode, .pauseTracking, .none,
     ]
 
     /// The key a shortcut or hold-key action carries.
@@ -140,6 +144,7 @@ struct GestureMap: Codable, Equatable {
         .swipeRight: .shortcut(Shortcut(keyCode: 33, modifiers: CGEventFlags.maskCommand.rawValue)), // ⌘[
         .swipeLeft: .shortcut(Shortcut(keyCode: 30, modifiers: CGEventFlags.maskCommand.rawValue)),  // ⌘]
         .twoFingers: .scroll,
+        .crossedFingers: .none,
     ])
 
     subscript(_ trigger: Trigger) -> GestureAction {

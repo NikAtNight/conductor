@@ -17,11 +17,12 @@ on-device. No video leaves the machine, and there is no Python, no model downloa
 | Closed fist, move up or down | Scroll, the same way |
 | Both hands pinched, spread or squeeze | Zoom (cmd+scroll, or cmd +/- keys) |
 | Index and middle up, flick sideways | Swipe: back (⌘[) or forward (⌘]) |
+| Index and middle crossed, held briefly | Scroll mode on or off (off by default, see below) |
 | ⌃⌥⌘H | Turn tracking on or off from anywhere |
 
-Those are the defaults. Every trigger (four pinches, fist, both hands, two fingers, two swipes) can be rebound
-in Settings > Gestures to click/drag, right click, middle click, scroll, zoom, a keyboard shortcut,
-hold a key (push-to-talk), pause / resume, or nothing. Apps can have their own profile: add an app
+Those are the defaults. Every trigger (four pinches, fist, both hands, two fingers, two swipes, crossed
+fingers) can be rebound in Settings > Gestures to click/drag, right click, middle click, scroll, zoom, a
+keyboard shortcut, hold a key (push-to-talk), scroll mode on / off, pause / resume, or nothing. Apps can have their own profile: add an app
 in the Gestures tab and its bindings apply while it's in front.
 
 The cursor follows your index knuckle. Pinching, raising two fingers, and making a fist all
@@ -41,6 +42,33 @@ camera below eye level, or tilted down at your hands, sees fingers from above an
 
 If the hand leaves the frame while pinched, the button is released, and so is any held key.
 Nothing gets stuck down.
+
+### Scroll mode
+
+Scrolling with a fist or two fingers means holding fingers curled. Scroll mode scrolls with a relaxed,
+open hand instead. Turn it on in Settings > Gestures > Scroll mode > Set up, which binds crossed index
+and middle fingers to it.
+
+1. Cross your index and middle fingers for about a third of a second. The cursor ring turns purple.
+2. Uncross them and rest your hand wherever it's comfortable. After a moment, that spot is neutral.
+3. Knuckles above neutral scroll down the page, below it scroll up. Farther from neutral is faster.
+   Near neutral nothing scrolls. The ring shows an arrow for the direction, or a bar at rest.
+4. Cross your fingers again to go back to pointing.
+
+While scroll mode is on, the cursor holds still and pinches, fists, swipes, and pause do nothing, so
+fingers curling as you rock your hand can't click. Like pause, scroll mode is shared by every app
+profile. Crossing straight out of the two-finger pose can scroll a few pixels before the cross counts,
+and uncrossing back into it scrolls as usual. Losing the hand for a moment keeps scroll mode and sets a new
+neutral when it comes back. Gone for 1.5 seconds, you're back to pointing.
+
+The camera sees the hand in 2D. Tipping your fingers toward the screen lowers your knuckles in the
+picture, and so does tipping them back, so rocking from an upright hand only scrolls up. To scroll both
+ways by rocking at the wrist, rest with the hand tipped forward a little when neutral is set. Pushing
+the hand toward the screen isn't measured.
+
+Crossed fingers only count with the palm roughly facing the camera. Turned edge-on, the fingertips
+line up behind each other and look crossed when they aren't. Replaying the recorded gesture logs with
+these settings never switches by accident.
 
 ## Control and accessibility
 
@@ -134,7 +162,7 @@ too dark or tracking keeps guessing, the preview and the menu say so.
 Menu bar > Record Gesture Log writes every camera frame to a new file in
 `~/Library/Logs/Conductor/` (Show Gesture Logs opens the folder). Each line is one JSON object: a
 timestamp, every hand joint Vision found with its confidence, the measurements the recognizer
-decides with (pinch distances, index lift and visible length, fist and pointing checks), the mode,
+decides with (pinch distances, index lift and visible length, finger cross, fist and pointing checks), the mode,
 any actions fired, where the cursor went, and frame timing (gap since the previous camera frame, time
 in Vision, time for the whole frame). Camera stalls and settings refreshes get their own lines. It's numbers only, never camera images, and it stays
 on your Mac. Turn it off when you're done; it grows by a few megabytes a minute.
@@ -168,7 +196,7 @@ Sources/Conductor/
   Camera/        AVCaptureSession wrapper, camera choice, brightness/confidence checks
   Tracking/      Vision hand pose request, the HandPose model (open hand, fist, two fingers),
                  the gesture log
-  Gestures/      GestureMap, GestureRecognizer (control, pause, dwell, swipes), ControlBox,
+  Gestures/      GestureMap, GestureRecognizer (control, pause, scroll mode, dwell, swipes), ControlBox,
                  ScreenMapper, calibration, One Euro filter, pointer helpers, ScrollPolicy
   Control/       CGEvent posting (incl. held modifier keys), Accessibility check, global hotkey
   Feedback/      Cursor ring overlay, hand map, sounds and VoiceOver announcements

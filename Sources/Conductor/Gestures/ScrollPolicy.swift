@@ -48,7 +48,9 @@ struct ScrollPolicy {
             // Kept per reference frame, so a faster camera doesn't read as a slower flick.
             recent.append(pixels * CGFloat(Self.referenceFrame / max(dt, 0.001)))
             if recent.count > 4 { recent.removeFirst() }
-            return Int32(pixels.rounded())
+            // A hand held still (or scroll mode at rest) posts nothing rather than empty wheel events.
+            let step = Int32(pixels.rounded())
+            return step == 0 ? nil : step
         }
         if wasScrolling, !scrolling {
             if momentum { release() } else { recent.removeAll() }
