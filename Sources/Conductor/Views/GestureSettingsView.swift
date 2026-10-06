@@ -46,7 +46,7 @@ struct GestureSettingsView: View {
             }
             Section("Push to talk") {
                 HStack {
-                    Text("Thumb + ring pinch talks to LocalFlow")
+                    Text("Thumb + ring pinch talks to Walkie")
                     Spacer()
                     Button("Set up") {
                         var map = currentMap
@@ -54,7 +54,7 @@ struct GestureSettingsView: View {
                         setMap(map)
                     }
                 }
-                Caption("Holds Right ⌘, LocalFlow's dictation key, for as long as you pinch. Any push-to-talk app works the same way: pick Hold a key for a gesture and record that app's key. Pressing a modifier on its own records just that key.")
+                Caption("Holds Right ⌘, Walkie's dictation key, for as long as you pinch. Any push-to-talk app works the same way: pick Hold a key for a gesture and record that app's key. Pressing a modifier on its own records just that key.")
             }
             Section("Scroll mode") {
                 HStack {

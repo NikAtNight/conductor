@@ -112,7 +112,7 @@ these settings never switches by accident.
 - Trackpad mode. Settings > Tracking: the cursor moves by hand travel with acceleration instead of
   sitting where your hand is.
 - Push-to-talk. "Hold a key" holds any key while a gesture is held. Settings > Gestures has a
-  one-click setup that holds Right ⌘ for LocalFlow.
+  one-click setup that holds Right ⌘ for Walkie.
 
 ## Build and run
 

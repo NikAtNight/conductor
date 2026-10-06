@@ -65,7 +65,7 @@ final class InputController: @unchecked Sendable {
     }
 
     /// Presses a key and leaves it down until `keyUp`. Modifier keys go out as flagsChanged events
-    /// with the left/right device bit set, which is how apps (LocalFlow included) tell Right ⌘
+    /// with the left/right device bit set, which is how apps (Walkie included) tell Right ⌘
     /// from Left ⌘.
     func keyDown(_ key: Shortcut) {
         guard heldKeys[key.keyCode] == nil else { return }
