@@ -356,6 +356,29 @@ final class LookPickerTests: XCTestCase {
         XCTAssertEqual(picker.update(nil, at: time(1), locked: false), top)
         XCTAssertEqual(feed(&picker, FaceFixtures.face(pitchDegrees: 12), frames: 2...60), top)
     }
+
+    func testAGlanceDuringAHoldDoesNotReleaseIt() {
+        // Weak calibration: the head jitters across the midpoint between screens. One frame on the
+        // top side used to release the hold, after which the next dwell on bottom undid the switch.
+        var picker = pickerOnBottom()
+        picker.override(to: top)
+        feed(&picker, FaceFixtures.face(pitchDegrees: 12), frames: 1...10)
+        XCTAssertEqual(picker.update(FaceFixtures.face(pitchDegrees: 5), at: time(11), locked: false), top)
+        XCTAssertEqual(feed(&picker, FaceFixtures.face(pitchDegrees: 12), frames: 12...(12 + 4 * dwellFrames)), top)
+    }
+
+    func testHoveringAtTheMidpointDuringAHoldNeverReleasesIt() {
+        var picker = pickerOnBottom()
+        picker.override(to: top)
+        feed(&picker, FaceFixtures.face(pitchDegrees: 12), frames: 1...10)
+        for frame in 11...(11 + 8 * dwellFrames) {
+            // Alternating a hair either side of the midpoint (8.5), every frame.
+            let pitch = frame.isMultiple(of: 2) ? 8.4 : 8.6
+            XCTAssertEqual(picker.update(FaceFixtures.face(pitchDegrees: pitch), at: time(frame), locked: false), top)
+        }
+        XCTAssertEqual(feed(&picker, FaceFixtures.face(pitchDegrees: 12), frames: 200...(200 + 4 * dwellFrames)), top,
+                       "the hold is still on: back on bottom doesn't switch")
+    }
 }
 
 /// Passes per sitting distance, with numbers from Nikhil's desk: up close the head sweeps far

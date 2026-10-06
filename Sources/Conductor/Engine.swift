@@ -425,6 +425,7 @@ final class Engine: @unchecked Sendable {
             if self.state.idle != idle { self.state.idle = idle }
             if self.state.mode != recognized.mode { self.state.mode = recognized.mode }
             if self.state.feedback != recognized.feedback { self.state.feedback = recognized.feedback }
+            if self.state.activeTrigger != recognized.trigger { self.state.activeTrigger = recognized.trigger }
             if clicked { self.state.clicks.send() }
             for event in recognized.events { self.state.events.send(event) }
         }

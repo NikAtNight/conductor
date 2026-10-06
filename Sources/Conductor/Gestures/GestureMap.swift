@@ -3,7 +3,8 @@ import CoreGraphics
 
 /// Something the hand can do that Conductor detects.
 enum Trigger: String, CaseIterable, Codable, Identifiable {
-    case indexPinch, middlePinch, ringPinch, littlePinch, fist, twoHandPinch, swipeLeft, swipeRight, twoFingers, crossedFingers
+    case indexPinch, middlePinch, ringPinch, littlePinch, fist, twoHandPinch, swipeLeft, swipeRight, twoFingers, crossedFingers,
+         indexPoint
 
     var id: String { rawValue }
 
@@ -19,6 +20,7 @@ enum Trigger: String, CaseIterable, Codable, Identifiable {
         case .swipeRight: return "Two-finger swipe right"
         case .twoFingers: return "Two fingers, move up or down"
         case .crossedFingers: return "Index and middle crossed"
+        case .indexPoint: return "Point with index, thumb out"
         }
     }
 
@@ -29,12 +31,17 @@ enum Trigger: String, CaseIterable, Codable, Identifiable {
         case .middlePinch: return .middleTip
         case .ringPinch: return .ringTip
         case .littlePinch: return .littleTip
-        case .fist, .twoHandPinch, .swipeLeft, .swipeRight, .twoFingers, .crossedFingers: return nil
+        case .fist, .twoHandPinch, .swipeLeft, .swipeRight, .twoFingers, .crossedFingers, .indexPoint: return nil
         }
     }
 
     static let pinches: [Trigger] = [.indexPinch, .middlePinch, .ringPinch, .littlePinch]
     static let swipes: [Trigger] = [.swipeLeft, .swipeRight]
+}
+
+/// Which way the index finger points in the pointing sign, as the user sees it.
+enum Direction: Equatable {
+    case up, down, left, right
 }
 
 /// A key plus modifiers, stored as CGEvent values so posting is a direct pass-through.
@@ -69,7 +76,8 @@ enum GestureAction: Codable, Equatable, Hashable {
     case scrollMode
     /// Holds a key down for as long as the trigger is held: push-to-talk.
     case holdKey(Shortcut)
-    /// Moves the control box to the next display, for when the head can't tell the screens apart.
+    /// Moves the control box to another display, for when the head can't tell the screens apart.
+    /// On the pointing sign the finger picks the display; on anything else it's the next one.
     case switchDisplay
 
     enum Shape { case button, tap, motion, inert }
@@ -139,7 +147,7 @@ struct GestureMap: Codable, Equatable {
     static let standard = GestureMap(bindings: [
         .indexPinch: .leftButton,
         .middlePinch: .rightClick,
-        .ringPinch: .switchDisplay,
+        .ringPinch: .none,
         .littlePinch: .none,
         .fist: .scroll,
         .twoHandPinch: .zoom,
@@ -148,6 +156,7 @@ struct GestureMap: Codable, Equatable {
         .swipeLeft: .shortcut(Shortcut(keyCode: 30, modifiers: CGEventFlags.maskCommand.rawValue)),  // ⌘]
         .twoFingers: .scroll,
         .crossedFingers: .none,
+        .indexPoint: .switchDisplay,
     ])
 
     subscript(_ trigger: Trigger) -> GestureAction {
@@ -158,11 +167,19 @@ struct GestureMap: Codable, Equatable {
     static func load(from defaults: UserDefaults) -> GestureMap {
         guard let data = defaults.data(forKey: "gestureMap"),
               var map = try? JSONDecoder().decode(GestureMap.self, from: data) else { return .standard }
-        // Triggers added after the map was saved get their default binding.
-        for trigger in Trigger.allCases where map.bindings[trigger] == nil {
-            map.bindings[trigger] = GestureMap.standard[trigger]
-        }
+        map.addMissingTriggers()
         return map
+    }
+
+    /// Triggers added after the map was saved get their default binding. Switch display shipped
+    /// on the ring pinch before the pointing sign existed; a map from then moves it to the sign
+    /// once, since the ring finger sits next to a sore little finger. Rebinding the ring pinch
+    /// afterwards sticks.
+    mutating func addMissingTriggers() {
+        if bindings[.indexPoint] == nil, self[.ringPinch] == .switchDisplay { self[.ringPinch] = .none }
+        for trigger in Trigger.allCases where bindings[trigger] == nil {
+            bindings[trigger] = GestureMap.standard[trigger]
+        }
     }
 
     func save(to defaults: UserDefaults) {

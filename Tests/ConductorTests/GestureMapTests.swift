@@ -5,19 +5,85 @@ final class GestureMapTests: XCTestCase {
     typealias Action = GestureRecognizer.Action
     let dt = 1.0 / 30
 
-    func testRingPinchSwitchesDisplayOnceByDefault() {
-        XCTAssertEqual(GestureMap.standard[.ringPinch], .switchDisplay)
+    func testThePointingSignSwitchesDisplayOnceByDefault() {
+        XCTAssertEqual(GestureMap.standard[.indexPoint], .switchDisplay)
+        XCTAssertEqual(GestureMap.standard[.ringPinch], GestureAction.none)
         var r = GestureRecognizer(config: .instant)
-        let out = r.update(hands: [PoseFixtures.pinched(.ringTip)], at: 0)
-        XCTAssertEqual(out.actions, [.switchDisplay])
-        XCTAssertEqual(out.mode, .point)
+        var actions: [Action] = []
+        var last: GestureRecognizer.Output!
+        for i in 0..<20 {
+            last = r.update(hands: [PoseFixtures.pointingSign(.up)], at: Double(i) * dt)
+            actions += last.actions
+            if i < 8 { XCTAssertEqual(actions, [], "not before the hold") }
+            XCTAssertNotNil(last.pointer, "the cursor keeps moving")
+        }
+        XCTAssertEqual(actions, [.switchDisplay(toward: .up)], "once, however long it's held")
+        XCTAssertEqual(last.mode, .point)
+        XCTAssertEqual(last.label, "Point with index, thumb out: Switch display")
+    }
+
+    func testThePointingHoldShowsOnTheRingAndInTheLabel() {
+        var r = GestureRecognizer(config: .instant)
+        var progress: [CGFloat] = []
+        var labels: Set<String> = []
+        for i in 0..<12 {
+            let out = r.update(hands: [PoseFixtures.pointingSign(.up)], at: Double(i) * dt)
+            progress.append(out.feedback.point)
+            labels.insert(out.label)
+        }
+        XCTAssertEqual(progress.first, 0)
+        XCTAssertTrue(zip(progress, progress.dropFirst()).allSatisfy { $1 >= $0 }, "fills, never drops: \(progress)")
+        XCTAssertEqual(progress.last, 1, "held after firing")
+        XCTAssertTrue(labels.contains("Point with index, thumb out: hold…"))
+        XCTAssertEqual(r.update(hands: [PoseFixtures.openHand()], at: 12 * dt).feedback.point, 0)
+    }
+
+    func testABriefPointDoesNothing() {
+        var r = GestureRecognizer(config: .instant)
+        var actions: [Action] = []
+        for i in 0..<5 { actions += r.update(hands: [PoseFixtures.pointingSign(.down)], at: Double(i) * dt).actions }
+        for i in 5..<10 { actions += r.update(hands: [PoseFixtures.openHand()], at: Double(i) * dt).actions }
+        XCTAssertEqual(actions, [])
+    }
+
+    func testTheFingerPicksTheDirectionAsTheUserSeesIt() {
+        for direction in [Direction.down, .left, .right] {
+            var r = GestureRecognizer(config: .instant)
+            var actions: [Action] = []
+            for i in 0..<12 { actions += r.update(hands: [PoseFixtures.pointingSign(direction)], at: Double(i) * dt).actions }
+            XCTAssertEqual(actions, [.switchDisplay(toward: direction)])
+        }
+        var unmirrored = GestureRecognizer.Config.instant
+        unmirrored.mirrored = false
+        var r = GestureRecognizer(config: unmirrored)
+        var actions: [Action] = []
+        for i in 0..<12 {
+            actions += r.update(hands: [PoseFixtures.pointingSign(.right, mirrored: false)], at: Double(i) * dt).actions
+        }
+        XCTAssertEqual(actions, [.switchDisplay(toward: .right)])
+    }
+
+    func testARelaxedPointOrAFingerAimedAtTheCameraDoesNotSwitch() {
+        for hand in [PoseFixtures.pointing(tuckedThumb: true), PoseFixtures.aimedAtCamera()] {
+            var r = GestureRecognizer(config: .instant)
+            var actions: [Action] = []
+            for i in 0..<20 { actions += r.update(hands: [hand], at: Double(i) * dt).actions }
+            XCTAssertEqual(actions, [])
+        }
+    }
+
+    func testAnyOtherTriggerBoundToSwitchDisplayGoesToTheNextDisplay() {
+        var map = GestureMap.standard
+        map[.ringPinch] = .switchDisplay
+        var r = GestureRecognizer(config: .instant, map: map)
+        XCTAssertEqual(r.update(hands: [PoseFixtures.pinched(.ringTip)], at: 0).actions, [.switchDisplay(toward: nil)])
         XCTAssertEqual(r.update(hands: [PoseFixtures.pinched(.ringTip)], at: dt).actions, [], "held, it doesn't repeat")
     }
 
     func testRingPinchMappedToScrollUsesPalmTravel() {
         var map = GestureMap.standard
         map[.ringPinch] = .scroll
-        var r = GestureRecognizer(config: .instant, map: map)
+        var r = GestureRecognizer(config: .travelScroll, map: map)
         _ = r.update(hands: [PoseFixtures.pinched(.ringTip, at: CGPoint(x: 0.5, y: 0.3))], at: 0)
         let out = r.update(hands: [PoseFixtures.pinched(.ringTip, at: CGPoint(x: 0.5, y: 0.35))], at: dt)
         XCTAssertEqual(out.mode, .scroll)
@@ -105,26 +171,43 @@ final class GestureMapTests: XCTestCase {
     }
 }
 
-/// Maps saved before Switch display existed have the ring pinch unbound.
+/// Switch display shipped on the ring pinch before the pointing sign existed.
 @MainActor
 final class SwitchDisplayDefaultTests: XCTestCase {
-    func testAnUnboundRingPinchGetsSwitchDisplayOnce() {
-        let suite = UserDefaults(suiteName: "SwitchDisplayDefaultTests.\(UUID())")!
+    /// A map saved before the sign existed.
+    private func oldMap(ringPinch: GestureAction) -> GestureMap {
         var old = GestureMap.standard
-        old[.ringPinch] = .none
-        old.save(to: suite)
-        XCTAssertEqual(Preferences(defaults: suite).gestureMap[.ringPinch], .switchDisplay)
-        XCTAssertEqual(GestureMap.load(from: suite)[.ringPinch], .switchDisplay, "saved, not just loaded")
-        Preferences(defaults: suite).gestureMap[.ringPinch] = .none
-        XCTAssertEqual(Preferences(defaults: suite).gestureMap[.ringPinch], .none, "unbinding it again sticks")
+        old.bindings[.indexPoint] = nil
+        old[.ringPinch] = ringPinch
+        return old
     }
 
-    func testABoundRingPinchIsLeftAlone() {
+    func testTheRingPinchBindingMovesToTheSignOnce() {
         let suite = UserDefaults(suiteName: "SwitchDisplayDefaultTests.\(UUID())")!
-        var old = GestureMap.standard
-        old[.ringPinch] = .middleClick
-        old.save(to: suite)
-        XCTAssertEqual(Preferences(defaults: suite).gestureMap[.ringPinch], .middleClick)
+        oldMap(ringPinch: .switchDisplay).save(to: suite)
+        let map = Preferences(defaults: suite).gestureMap
+        XCTAssertEqual(map[.indexPoint], .switchDisplay)
+        XCTAssertEqual(map[.ringPinch], GestureAction.none)
+        XCTAssertEqual(GestureMap.load(from: suite)[.ringPinch], GestureAction.none, "saved, not just loaded")
+        Preferences(defaults: suite).gestureMap[.ringPinch] = .switchDisplay
+        XCTAssertEqual(Preferences(defaults: suite).gestureMap[.ringPinch], .switchDisplay, "binding it again sticks")
+    }
+
+    func testARingPinchBoundToSomethingElseIsLeftAlone() {
+        let suite = UserDefaults(suiteName: "SwitchDisplayDefaultTests.\(UUID())")!
+        oldMap(ringPinch: .middleClick).save(to: suite)
+        let map = Preferences(defaults: suite).gestureMap
+        XCTAssertEqual(map[.ringPinch], .middleClick)
+        XCTAssertEqual(map[.indexPoint], .switchDisplay)
+    }
+
+    func testAppProfilesMoveTheBindingToo() throws {
+        let suite = UserDefaults(suiteName: "SwitchDisplayDefaultTests.\(UUID())")!
+        let profile = AppProfile(bundleID: "com.example.app", name: "Example", map: oldMap(ringPinch: .switchDisplay))
+        suite.set(try JSONEncoder().encode([profile.bundleID: profile]), forKey: "appProfiles")
+        let loaded = try XCTUnwrap(Preferences(defaults: suite).appProfiles[profile.bundleID])
+        XCTAssertEqual(loaded.map[.ringPinch], GestureAction.none)
+        XCTAssertEqual(loaded.map[.indexPoint], .switchDisplay)
     }
 }
 

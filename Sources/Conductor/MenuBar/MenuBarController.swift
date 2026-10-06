@@ -239,7 +239,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func showPreview() {
         if previewWindow == nil {
             let view = PreviewView(state: state, preferences: preferences, session: engine.camera.session)
-            previewWindow = makeWindow(title: "Conductor Preview", content: view, size: NSSize(width: 640, height: 480))
+            previewWindow = makeWindow(title: "Conductor Preview", content: view, size: NSSize(width: 900, height: 480))
         }
         present(previewWindow)
         if !state.isRunning { Task { await engine.start() } }

@@ -31,8 +31,19 @@ final class Preferences: ObservableObject {
     /// How far slow moves carry the cursor in the absolute mode, as a fraction. 1 turns it off.
     @Published var slowMoveSpeed: Double { didSet { save() } }
     @Published var momentumScroll: Bool { didSet { save() } }
+    @Published var scrollStyle: ScrollStyle { didSet { save() } }
     /// Nil means automatic: see CameraCapture.preferredDevice.
     @Published var cameraDeviceID: String? { didSet { save() } }
+
+    /// How a held scroll trigger (fist, two fingers) turns the hand into scrolling.
+    enum ScrollStyle: String, CaseIterable, Identifiable {
+        /// Hold the hand above or below where the trigger engaged; farther is faster. Letting go stops.
+        case lever
+        /// The page follows the hand's travel, and a flick can coast.
+        case travel
+        var id: String { rawValue }
+        var title: String { self == .lever ? "Hold your hand off centre" : "Move your hand" }
+    }
     @Published var powerSaving: Bool { didSet { save() } }
     /// A box measured by calibration, in Vision space. Overrides the automatic layout when set.
     @Published var calibratedBox: CGRect? { didSet { save() } }
@@ -108,6 +119,7 @@ final class Preferences: ObservableObject {
         var trackpadSpeed: Double
         var slowMoveSpeed: Double
         var momentumScroll: Bool
+        var scrollStyle: ScrollStyle
         var cameraDeviceID: String?
         var powerSaving: Bool
         var calibratedBox: CGRect?
@@ -128,7 +140,7 @@ final class Preferences: ObservableObject {
                  scrollGain: scrollGain, zoomWithKeys: zoomWithKeys, displayMode: displayMode,
                  gestureMap: gestureMap, matchScreenShape: matchScreenShape, cameraPlacement: cameraPlacement,
                  pointerMode: pointerMode, trackpadSpeed: trackpadSpeed, slowMoveSpeed: slowMoveSpeed,
-                 momentumScroll: momentumScroll,
+                 momentumScroll: momentumScroll, scrollStyle: scrollStyle,
                  cameraDeviceID: cameraDeviceID, powerSaving: powerSaving, calibratedBox: calibratedBox,
                  pinchDeadZone: pinchDeadZone, dwellRadius: dwellRadius, appProfiles: appProfiles,
                  mainHand: mainHand, requireReadyPose: requireReadyPose, dwellClick: dwellClick, dwellTime: dwellTime,
@@ -159,17 +171,9 @@ final class Preferences: ObservableObject {
         scrollGain = d("scrollGain", 1.0)
         zoomWithKeys = b("zoomWithKeys", false)
         displayMode = DisplayMode(rawValue: defaults.string(forKey: "displayMode") ?? "") ?? .all
-        var map = GestureMap.load(from: defaults)
-        // The ring pinch did nothing by default before Switch display existed, so saved maps have it
-        // unbound. Bind it once; someone who unbinds it again keeps it unbound. Saved here because
-        // nothing saves during init.
-        if !defaults.bool(forKey: "switchDisplayDefault") {
-            if map[.ringPinch] == .none {
-                map[.ringPinch] = .switchDisplay
-                map.save(to: defaults)
-            }
-            defaults.set(true, forKey: "switchDisplayDefault")
-        }
+        // Saved here because nothing saves during init: a binding moved on load must stick.
+        let map = GestureMap.load(from: defaults)
+        map.save(to: defaults)
         gestureMap = map
         matchScreenShape = b("matchScreenShape", true)
         mainHand = GestureRecognizer.MainHand(rawValue: defaults.string(forKey: "mainHand") ?? "") ?? .right
@@ -184,6 +188,7 @@ final class Preferences: ObservableObject {
         trackpadSpeed = d("trackpadSpeed", 1.0)
         slowMoveSpeed = d("slowMoveSpeed", 0.35)
         momentumScroll = b("momentumScroll", true)
+        scrollStyle = ScrollStyle(rawValue: defaults.string(forKey: "scrollStyle") ?? "") ?? .lever
         cameraDeviceID = defaults.string(forKey: "cameraDeviceID")
         powerSaving = b("powerSaving", true)
         // Boxes calibrated before the cursor followed the index knuckle were measured from the
@@ -203,9 +208,7 @@ final class Preferences: ObservableObject {
             .flatMap { try? JSONDecoder().decode([String: AppProfile].self, from: $0) } ?? [:]
         // Profiles saved before newer triggers existed get those triggers' defaults.
         for (id, var profile) in appProfiles {
-            for trigger in Trigger.allCases where profile.map.bindings[trigger] == nil {
-                profile.map.bindings[trigger] = GestureMap.standard[trigger]
-            }
+            profile.map.addMissingTriggers()
             appProfiles[id] = profile
         }
         cameraPlacement = defaults.data(forKey: "cameraPlacement")
@@ -237,6 +240,7 @@ final class Preferences: ObservableObject {
         trackpadSpeed = 1.0
         slowMoveSpeed = 0.35
         momentumScroll = true
+        scrollStyle = .lever
         cameraDeviceID = nil
         powerSaving = true
         calibratedBox = nil
@@ -269,6 +273,7 @@ final class Preferences: ObservableObject {
         defaults.set(trackpadSpeed, forKey: "trackpadSpeed")
         defaults.set(slowMoveSpeed, forKey: "slowMoveSpeed")
         defaults.set(momentumScroll, forKey: "momentumScroll")
+        defaults.set(scrollStyle.rawValue, forKey: "scrollStyle")
         defaults.set(cameraDeviceID, forKey: "cameraDeviceID")
         defaults.set(powerSaving, forKey: "powerSaving")
         if let box = calibratedBox {

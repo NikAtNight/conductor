@@ -61,8 +61,12 @@ How far apart two displays' average head angles are, measured in how much the he
 _Avoid_: accuracy, confidence
 
 **Switch display**:
-The action that moves the control box to the next display by hand, overriding the look pick until the head turns elsewhere.
+The action that moves the control box to another display by hand: the one pointed at on the pointing sign, the next one otherwise. Overrides the look pick until the head has turned elsewhere for a dwell.
 _Avoid_: next screen, display override
+
+**Pointing sign**:
+Index finger straight, thumb out, the other three curled, held briefly. The thumb out separates it from a relaxed pointing hand. The index finger's direction, up, down, left or right as the user sees it, goes with the trigger.
+_Avoid_: finger gun, L shape, point (on its own; a relaxed pointing hand is not the sign)
 
 **Frame pipeline**:
 Everything that happens to one camera frame after hand detection, ending in the cursor position and the input commands to post.
@@ -76,12 +80,16 @@ _Avoid_: event, CGEvent
 The rules that turn scroll triggers into wheel pixels, keep a flick coasting, and decide what ends a coast.
 _Avoid_: momentum scroller, inertia
 
+**Scroll lever**:
+Scrolling at a rate set by how far the knuckles sit above or below neutral, with a small dead zone around it. Held scroll triggers use it by default (the scroll style "lever"), and scroll mode always does. The other scroll style, "travel", moves the page by the hand's movement instead and can coast.
+_Avoid_: rate control, joystick scrolling
+
 **Scroll mode**:
-A state, switched on and off by a trigger bound to it, in which the relaxed hand scrolls by how far its knuckles sit above or below neutral, and no other trigger fires.
+A state, switched on and off by a trigger bound to it, in which the relaxed hand works the scroll lever and no other trigger fires.
 _Avoid_: command mode, scroll lock
 
 **Neutral**:
-Where the knuckles settle just after scroll mode starts. Scroll mode measures from it, with a small dead zone around it.
+Where the knuckles were when a scroll trigger engaged, or where they settle just after scroll mode starts. The scroll lever measures from it.
 _Avoid_: center, origin
 
 **Momentum**:

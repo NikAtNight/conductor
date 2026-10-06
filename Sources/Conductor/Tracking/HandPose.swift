@@ -150,6 +150,27 @@ struct HandPose: Equatable {
         isCurled(.middleTip, .middlePIP) && isCurled(.ringTip, .ringPIP) && isCurled(.littleTip, .littlePIP)
     }
 
+    /// Index straight, the other three curled, and the thumb held out: the pointing sign. A relaxed
+    /// pointing hand rests the thumb on the curled fingers, and that doesn't count, so hovering with
+    /// one finger out can't fire whatever the sign is bound to.
+    var isPointingSign: Bool {
+        guard othersCurled, let wrist = self[.wrist], let tip = self[.indexTip], let pip = self[.indexPIP],
+              tip.distance(to: wrist) > pip.distance(to: wrist) * 1.1,
+              let thumbOut = normalizedDistance(.thumbTip, .indexMCP) else { return false }
+        return thumbOut > Self.pointingThumbOut
+    }
+
+    /// Thumb tip to index knuckle, in hand scales, past which the thumb counts as out for the sign.
+    /// In Nikhil's logs a deliberate sign measured 0.50 to 0.56 and a relaxed pointing hand 0.24
+    /// to 0.29, so 0.4 sits between them with room either side.
+    static let pointingThumbOut: CGFloat = 0.4
+
+    /// Index knuckle to tip, in palm widths, Vision axes: x toward the camera's right, y up.
+    var indexVector: CGVector? {
+        guard let tip = self[.indexTip], let knuckle = self[.indexMCP], let width = palmWidth, width > 0 else { return nil }
+        return CGVector(dx: (tip.x - knuckle.x) / width, dy: (tip.y - knuckle.y) / width)
+    }
+
     private func isCurled(_ tip: HandJoint, _ pip: HandJoint) -> Bool {
         guard let wrist = self[.wrist], let t = self[tip], let p = self[pip] else { return false }
         return t.distance(to: wrist) < p.distance(to: wrist)

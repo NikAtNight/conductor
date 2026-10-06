@@ -145,7 +145,7 @@ final class ScrollModeTests: XCTestCase {
 
     func testLosingTheHandBrieflyKeepsScrollModeButResetsNeutral() {
         enterScrollMode()
-        frame([], count: 10)
+        frame([], count: 15) // past the dropout tolerance, well short of giving up control
         XCTAssertTrue(r.inScrollMode)
         // Back somewhere else: that settles as the new neutral rather than scrolling.
         frames(PoseFixtures.openHand(at: CGPoint(x: 0.5, y: 0.45)), for: 1)
@@ -291,5 +291,93 @@ final class ScrollModeEdgeTests: XCTestCase {
                                                  frontmost: "app")
         XCTAssertEqual(effective[.crossedFingers], .scrollMode)
         XCTAssertEqual(effective[.middlePinch], .none)
+    }
+}
+
+/// A held scroll trigger works as a lever: where the knuckles were when it engaged is neutral, and
+/// holding them above or below it scrolls at a steady rate. No mode switch, and no return stroke.
+final class HeldLeverScrollTests: XCTestCase {
+    typealias Action = GestureRecognizer.Action
+    let dt = 1.0 / 30
+    var r = GestureRecognizer(config: .instant)
+    var t = 0.0
+    var outputs: [GestureRecognizer.Output] = []
+
+    private func frames(_ hand: HandPose, for seconds: TimeInterval) {
+        for _ in 0..<Int((seconds / dt).rounded(.up)) {
+            outputs.append(r.update(hands: [hand], at: t))
+            t += dt
+        }
+    }
+
+    private var travel: [CGFloat] {
+        outputs.flatMap(\.actions).compactMap { if case .scroll(let dy) = $0 { return dy } else { return nil } }
+    }
+
+    func testAFistHeldStillScrollsNothing() {
+        frames(PoseFixtures.openHand(), for: 0.1)
+        frames(PoseFixtures.fist(), for: 0.5)
+        XCTAssertEqual(outputs.last?.mode, .scroll)
+        XCTAssertTrue(travel.allSatisfy { $0 == 0 })
+        XCTAssertEqual(outputs.last?.feedback.scrollDirection, 0)
+    }
+
+    func testAFistHeldAboveNeutralScrollsDownThePageAtASteadyRate() {
+        frames(PoseFixtures.openHand(), for: 0.1)
+        frames(PoseFixtures.fist(), for: 0.1)
+        outputs.removeAll()
+        frames(PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.36)), for: 0.5)
+        let moving = travel.filter { $0 != 0 }
+        XCTAssertGreaterThanOrEqual(moving.count, 13)
+        XCTAssertTrue(moving.allSatisfy { $0 > 0 }, "positive travel is scrolling down the page")
+        // 0.06 up, 0.02 dead zone, rate 4 per second: 0.16 per second, so per frame about 0.0053.
+        XCTAssertEqual(moving.last!, 0.04 * 4 * dt, accuracy: 1e-6)
+        XCTAssertEqual(outputs.last?.feedback.scrollDirection, 1)
+    }
+
+    func testBelowNeutralScrollsUpAndFartherIsFaster() {
+        frames(PoseFixtures.openHand(), for: 0.1)
+        frames(PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.4)), for: 0.1)
+        outputs.removeAll()
+        frames(PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.36)), for: 0.3)
+        let near = travel.last!
+        frames(PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.32)), for: 0.3)
+        let far = travel.last!
+        XCTAssertLessThan(near, 0)
+        XCTAssertLessThan(far, near)
+        XCTAssertEqual(outputs.last?.feedback.scrollDirection, -1)
+    }
+
+    func testOpeningTheHandStopsAndTheReturnStrokeScrollsNothing() {
+        frames(PoseFixtures.openHand(), for: 0.1)
+        frames(PoseFixtures.fist(), for: 0.1)
+        frames(PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.36)), for: 0.3)
+        outputs.removeAll()
+        frames(PoseFixtures.openHand(at: CGPoint(x: 0.5, y: 0.36)), for: 0.2)
+        frames(PoseFixtures.openHand(at: CGPoint(x: 0.5, y: 0.3)), for: 0.2)
+        XCTAssertEqual(travel, [])
+        XCTAssertEqual(outputs.last?.mode, .point)
+    }
+
+    func testEachNewFistStartsFromWhereItClosed() {
+        frames(PoseFixtures.openHand(), for: 0.1)
+        frames(PoseFixtures.fist(), for: 0.1)
+        frames(PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.36)), for: 0.3)
+        XCTAssertGreaterThan(travel.last!, 0)
+        frames(PoseFixtures.openHand(at: CGPoint(x: 0.5, y: 0.36)), for: 0.2)
+        outputs.removeAll()
+        frames(PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.36)), for: 0.3)
+        XCTAssertTrue(travel.allSatisfy { $0 == 0 }, "the same spot is the new neutral")
+    }
+
+    func testTwoFingersWorkTheSameWay() {
+        frames(PoseFixtures.openHand(), for: 0.1)
+        frames(PoseFixtures.twoFingers(), for: 0.2)
+        outputs.removeAll()
+        frames(PoseFixtures.twoFingers(at: CGPoint(x: 0.5, y: 0.36)), for: 0.3)
+        XCTAssertEqual(outputs.last?.mode, .scroll)
+        XCTAssertNil(outputs.last?.pointer, "the cursor holds still")
+        XCTAssertGreaterThan(travel.last!, 0)
+        XCTAssertEqual(outputs.last?.feedback.scrollDirection, 1)
     }
 }

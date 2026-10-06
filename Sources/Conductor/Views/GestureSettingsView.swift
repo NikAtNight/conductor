@@ -36,8 +36,12 @@ struct GestureSettingsView: View {
                     : "These bindings apply while this app is in front. Everything else uses Everywhere. Pause / resume and scroll mode are shared by every profile, so set them under Everywhere.")
             }
             Section("Bindings") {
+                Picker("Main hand", selection: $preferences.mainHand) {
+                    ForEach(GestureRecognizer.MainHand.allCases) { Text($0.title).tag($0) }
+                }
+                Caption("The pictures show this hand, as you see it in the preview. It's also the hand that moves the cursor when both are in view; the other one joins in for two-hand gestures. Any hand can make the gestures.")
                 ForEach(Trigger.allCases) { trigger in
-                    GestureRow(trigger: trigger, action: binding(for: trigger))
+                    GestureRow(trigger: trigger, hand: preferences.mainHand, action: binding(for: trigger))
                 }
             }
             Section("Push to talk") {
@@ -61,7 +65,7 @@ struct GestureSettingsView: View {
                 Caption("For scrolling with a relaxed, open hand instead of a fist. Cross your fingers for a moment, uncross them, and rest your hand where it's comfortable: that spot becomes neutral. Knuckles above neutral scroll down the page, below it scroll up, and the farther from neutral, the faster. Tipping your fingers toward the screen lowers the knuckles, so rest with your hand tipped forward a little and you can scroll both ways by rocking at the wrist. Clicks, other gestures, and pause are off until you cross your fingers again. The cursor ring turns purple and shows an arrow while scroll mode is on.")
             }
             Section {
-                Caption("Only one trigger is active at a time. Both hands beat a fist, a fist beats a pinch, and among pinches the fingertip closest to the thumb wins. Scroll and zoom on a one-handed trigger use up and down hand travel. With index and middle fingers raised and the others curled, the cursor holds still: moving the hand up or down drives that pose's binding (scroll by default), and a quick sideways flick swipes.")
+                Caption("Only one trigger is active at a time. Both hands beat a fist, a fist beats a pinch, and among pinches the fingertip closest to the thumb wins. Scroll on a one-handed trigger works as a lever: hold your hand above or below where it was when the trigger engaged (Settings > Tracking > Scroll by changes this). Zoom uses up and down hand travel. With index and middle fingers raised and the others curled, the cursor holds still: that pose's binding runs (scroll by default), and a quick sideways flick swipes. Point with your index finger, thumb out and the other fingers curled, to switch display: up, down, left or right picks the screen that way.")
                 HStack {
                     Spacer()
                     Button("Reset bindings") { setMap(.standard) }
@@ -116,6 +120,7 @@ struct GestureSettingsView: View {
 
 private struct GestureRow: View {
     let trigger: Trigger
+    let hand: GestureRecognizer.MainHand
     @Binding var action: GestureAction
 
     /// The picker works on kinds. A recorded key shows as its generic choice; switching between
@@ -138,21 +143,26 @@ private struct GestureRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Picker(trigger.title, selection: kind) {
-                ForEach(GestureAction.menuChoices, id: \.self) { choice in
-                    Text(choice.kindTitle).tag(choice)
+        HStack(alignment: .top, spacing: 10) {
+            HandSignView(trigger: trigger, hand: hand)
+                .frame(width: 56, height: 56)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 6) {
+                Picker(trigger.title, selection: kind) {
+                    ForEach(GestureAction.menuChoices, id: \.self) { choice in
+                        Text(choice.kindTitle).tag(choice)
+                    }
                 }
-            }
-            if let key = action.recordedKey {
-                HStack {
-                    Spacer()
-                    ShortcutRecorder(shortcut: Binding(
-                        get: { key },
-                        set: { newKey in
-                            if case .holdKey = action { action = .holdKey(newKey) } else { action = .shortcut(newKey) }
-                        }
-                    ))
+                if let key = action.recordedKey {
+                    HStack {
+                        Spacer()
+                        ShortcutRecorder(shortcut: Binding(
+                            get: { key },
+                            set: { newKey in
+                                if case .holdKey = action { action = .holdKey(newKey) } else { action = .shortcut(newKey) }
+                            }
+                        ))
+                    }
                 }
             }
         }

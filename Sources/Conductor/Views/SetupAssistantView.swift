@@ -87,12 +87,23 @@ struct SetupAssistantView: View {
                         }
                     }
                     step(6, "The gestures", done: false) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("• Hold an open hand still for half a second to take control.")
-                            Text("• Point with your hand; pinch thumb and index to click, hold the pinch to drag.")
-                            Text("• Thumb to middle finger to right click. A fist moved up or down scrolls.")
-                            Text("• Pinch with both hands and spread to zoom. Two fingers up and a flick to swipe.")
-                            Text("• ⌃⌥⌘H turns tracking on and off from anywhere.")
+                        VStack(alignment: .leading, spacing: 8) {
+                            Picker("Your main hand", selection: $preferences.mainHand) {
+                                ForEach(GestureRecognizer.MainHand.allCases) { Text($0.title).tag($0) }
+                            }
+                            .frame(maxWidth: 360)
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .top), count: 3), spacing: 10) {
+                                ForEach(Self.signs, id: \.caption) { sign in
+                                    VStack(spacing: 4) {
+                                        HandSignView(pose: sign.pose, arrow: sign.arrow, hand: preferences.mainHand, label: sign.caption)
+                                            .frame(width: 72, height: 72)
+                                            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                                        Text(sign.caption).font(.caption).multilineTextAlignment(.center)
+                                    }
+                                }
+                            }
+                            Text("Hold the pinch to drag. Two quick pinches double click. ⌃⌥⌘H turns tracking on and off from anywhere. Everything can be rebound in Settings > Gestures.")
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -144,6 +155,16 @@ struct SetupAssistantView: View {
         case .failed: return "Saw too small an area. Try again moving your whole hand, not just your fingers."
         }
     }
+
+    /// The default gestures, as pictures.
+    private static let signs: [(pose: HandPose, arrow: HandSignView.Arrow?, caption: String)] = [
+        (HandPoseExamples.openHand(), nil, "Open hand, held still: take control"),
+        (HandPoseExamples.pinched(.indexTip), nil, "Thumb + index pinch: click"),
+        (HandPoseExamples.pinched(.middleTip), nil, "Thumb + middle pinch: right click"),
+        (HandPoseExamples.fist(), .upDown, "Fist, hold above or below: scroll"),
+        (HandPoseExamples.twoFingers(), .leftRight, "Two fingers, flick sideways: back or forward"),
+        (HandPoseExamples.pointingSign(.up), nil, "Point, thumb out: switch display"),
+    ]
 
     private func step<Content: View>(_ number: Int, _ title: String, done: Bool,
                                      @ViewBuilder content: () -> Content) -> some View {

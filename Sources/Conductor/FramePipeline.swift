@@ -107,12 +107,14 @@ struct FramePipeline {
         recognizer.config.dwellRadius = CGFloat(snapshot.dwellRadius)
         recognizer.config.pinchDeadZone = CGFloat(snapshot.pinchDeadZone)
         recognizer.config.mirrored = snapshot.mirrored
+        recognizer.config.scrollLever = snapshot.scrollStyle == .lever
         relative.speed = CGFloat(snapshot.trackpadSpeed)
         relative.mirrored = snapshot.mirrored
         precision.slowGain = CGFloat(snapshot.slowMoveSpeed)
         scroll.gain = CGFloat(snapshot.scrollGain)
-        scroll.momentum = snapshot.momentumScroll
-        if !snapshot.momentumScroll { scroll.stop() }
+        // A lever has no flick to coast from: letting go stops the page.
+        scroll.momentum = snapshot.momentumScroll && snapshot.scrollStyle == .travel
+        if !scroll.momentum { scroll.stop() }
         return commands
     }
 
@@ -164,7 +166,9 @@ struct FramePipeline {
         let recognized = recognizer.update(hands: hands, at: time)
         wasIdle = recognized.mode == .idle
         // Before the pointer maps, so this frame's cursor already lands on the new display.
-        if inputAllowed, recognized.actions.contains(.switchDisplay) { switchDisplay() }
+        if inputAllowed {
+            for case .switchDisplay(let direction) in recognized.actions { switchDisplay(toward: direction) }
+        }
         var commands: [InputCommand] = []
         var cursor: CGPoint?
         if let pointer = recognized.pointer {
@@ -265,18 +269,38 @@ struct FramePipeline {
         moveTarget(to: next)
     }
 
-    /// The Switch display action: the next display top to bottom, then left to right, wrapping
+    /// The Switch display action. A pointed direction picks the nearest display that way; with no
+    /// direction, or nothing there, the next display top to bottom, then left to right, wrapping
     /// around. Only the modes that target one display; in look mode the picker is told, so the
     /// head doesn't switch straight back.
-    private mutating func switchDisplay() {
+    private mutating func switchDisplay(toward direction: Direction?) {
         guard prefs.displayMode == .lookedAt || prefs.displayMode == .followCursor else { return }
         let ordered = displays.sorted { ($0.minY, $0.minX) < ($1.minY, $1.minX) }
         guard ordered.count > 1 else { return }
-        let next = ordered[(ordered.firstIndex(of: screen).map { $0 + 1 } ?? 0) % ordered.count]
+        let next = direction.flatMap { Self.display(from: screen, toward: $0, in: displays) }
+            ?? ordered[(ordered.firstIndex(of: screen).map { $0 + 1 } ?? 0) % ordered.count]
         if prefs.displayMode == .lookedAt, let uuid = lookDisplays.first(where: { $0.value == next })?.key {
             lookPicker?.override(to: uuid)
         }
         moveTarget(to: next)
+    }
+
+    /// The nearest other display whose centre lies in `direction` from `current`'s centre, judged
+    /// by the larger axis. Screen coordinates: y grows downward.
+    static func display(from current: CGRect, toward direction: Direction, in displays: [CGRect]) -> CGRect? {
+        func offset(_ other: CGRect) -> (dx: CGFloat, dy: CGFloat) { (other.midX - current.midX, other.midY - current.midY) }
+        return displays.filter { $0 != current }.filter { other in
+            let (dx, dy) = offset(other)
+            switch direction {
+            case .up: return dy < 0 && abs(dy) >= abs(dx)
+            case .down: return dy > 0 && abs(dy) >= abs(dx)
+            case .left: return dx < 0 && abs(dx) > abs(dy)
+            case .right: return dx > 0 && abs(dx) > abs(dy)
+            }
+        }.min { a, b in
+            let (ax, ay) = offset(a), (bx, by) = offset(b)
+            return ax * ax + ay * ay < bx * bx + by * by
+        }
     }
 
     /// Retargets mid-session, keeping the cursor's place.

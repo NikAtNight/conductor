@@ -72,6 +72,12 @@ final class TwoFingerScrollTests: XCTestCase {
     var t = 0.0
     var outputs: [GestureRecognizer.Output] = []
 
+    override func setUp() {
+        super.setUp()
+        // These are about the travel style; the lever has its own tests (HeldLeverScrollTests).
+        r.config.scrollLever = false
+    }
+
     private func frame(_ hand: HandPose, count: Int = 1) {
         for _ in 0..<count {
             outputs.append(r.update(hands: [hand], at: t))

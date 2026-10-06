@@ -13,41 +13,65 @@ on-device. No video leaves the machine, and there is no Python, no model downloa
 | Pinch thumb + index, held briefly | Mouse down. Hold and move to drag, release to click |
 | Two quick pinches | Double click |
 | Pinch thumb + middle finger | Right click |
-| Two fingers up, move hand up or down | Scroll, following your hand, with momentum after a flick |
-| Closed fist, move up or down | Scroll, the same way |
+| Two fingers up, hold hand above or below where it was | Scroll, faster the farther you hold it (see below) |
+| Closed fist, hold above or below | Scroll, the same way |
 | Both hands pinched, spread or squeeze | Zoom (cmd+scroll, or cmd +/- keys) |
 | Index and middle up, flick sideways | Swipe: back (⌘[) or forward (⌘]) |
 | Index and middle crossed, held briefly | Scroll mode on or off (off by default, see below) |
+| Point with your index finger, thumb out, held briefly | Switch display: the screen you point at |
 | ⌃⌥⌘H | Turn tracking on or off from anywhere |
 
 Those are the defaults. Every trigger (four pinches, fist, both hands, two fingers, two swipes, crossed
-fingers) can be rebound in Settings > Gestures to click/drag, right click, middle click, scroll, zoom, a
-keyboard shortcut, hold a key (push-to-talk), scroll mode on / off, pause / resume, or nothing. Apps can have their own profile: add an app
-in the Gestures tab and its bindings apply while it's in front.
+fingers, the pointing sign) can be rebound in Settings > Gestures to click/drag, right click, middle click,
+scroll, zoom, a keyboard shortcut, hold a key (push-to-talk), switch display, scroll mode on / off,
+pause / resume, or nothing. Each row shows a picture of the sign as you'd see your own hand in the
+preview, drawn for your main hand (Settings > Hands, or the picker at the top of the Gestures tab;
+either hand can make any gesture). Apps can have their own profile: add an app in the Gestures tab
+and its bindings apply while it's in front.
 
 The cursor follows your index knuckle. Pinching, raising two fingers, and making a fist all
 move your fingertips but not the knuckle, so none of them drag the cursor and clicks land where you
 aimed. At pinch start the cursor also freezes until your hand moves a little, which stops a click
 turning into a tiny accidental drag.
 
-Two-finger scrolling works like a trackpad: raise index and middle fingers with the others curled,
-and the page follows your hand up or down. Let go mid-move and it coasts. The cursor holds still in
-that pose, and a quick sideways flick in it swipes.
+### Scrolling
+
+A fist or two raised fingers (others curled) scrolls. Where your knuckles are when the fingers close
+is neutral. Hold your hand above neutral to scroll down the page, below it to scroll up; the farther
+from neutral, the faster. Near neutral nothing moves. Open your hand and the page stops at once, and
+bringing your hand back to where it started scrolls nothing, so there's no return stroke to fight.
+The cursor ring turns purple with an arrow for the direction while you scroll. The cursor holds still
+in the two-finger pose, and a quick sideways flick in it swipes.
+
+Settings > Tracking > Scroll by switches to the older style, Move your hand, where the page follows
+your hand like a trackpad and a flick coasts. It's less steady: the camera's frame-to-frame noise
+in your palm position goes straight into the wheel.
+
+Scrolling and the hand signs work anywhere the camera sees your hand. The control box (below) only
+decides where the cursor goes.
 
 A few guards stop accidental clicks. A pinch has to hold for a few frames (about 0.06 s), so a
-finger passing the thumb doesn't fire. When your index finger points straight at
-the camera, its tip can cover your thumb in the picture without touching it, so pinches don't start
-in that pose: angle your hand so the camera sees the finger from the side, or use dwell click. A
-camera below eye level, or tilted down at your hands, sees fingers from above and avoids this.
+finger passing the thumb doesn't fire. After any gesture ends, a finger has to open clear of the
+thumb before it can pinch, because opening a fist or letting go of one pinch swings fingertips past
+the thumb on the way. When your index finger points straight at the camera, its tip can cover your
+thumb in the picture without touching it, so pinches don't start in that pose: angle your hand so
+the camera sees the finger from the side, or use dwell click. A camera below eye level, or tilted
+down at your hands, sees fingers from above and avoids this.
 
-If the hand leaves the frame while pinched, the button is released, and so is any held key.
-Nothing gets stuck down.
+Pinching the ring or little finger drags the thumb past the middle finger, so two fingertips often
+sit at the thumb at once. On a near tie the finger further along the hand wins, and the index never
+loses a tie. A held middle, ring or little pinch also survives Vision briefly swapping its tip with
+a neighbouring finger, which otherwise dropped a push-to-talk key mid-sentence.
+
+If the hand leaves the frame while pinched, the button is released after about 0.4 s, and so is any
+held key. Vision loses a pinched hand for a few frames at a time, so a shorter wait cancelled held
+keys and drags that were still going. Nothing gets stuck down.
 
 ### Scroll mode
 
-Scrolling with a fist or two fingers means holding fingers curled. Scroll mode scrolls with a relaxed,
-open hand instead. Turn it on in Settings > Gestures > Scroll mode > Set up, which binds crossed index
-and middle fingers to it.
+Scrolling with a fist or two fingers means holding fingers curled. Scroll mode scrolls the same way
+with a relaxed, open hand instead. Turn it on in Settings > Gestures > Scroll mode > Set up, which
+binds crossed index and middle fingers to it.
 
 1. Cross your index and middle fingers for about a third of a second. The cursor ring turns purple.
 2. Uncross them and rest your hand wherever it's comfortable. After a moment, that spot is neutral.
@@ -104,10 +128,15 @@ On first launch a setup assistant walks through six steps: camera access, Access
 screens and where the camera sits, look calibration, reach and pointer speed, and the gestures.
 It's in the menu bar menu afterwards too.
 
-Show Preview starts the camera and shows the skeleton Vision found, plus a dashed green box: that
-box is the part of the frame that maps to your whole screen. Calibrate Reach replaces the
-automatic box with the area you actually reach while tracing it for six seconds. The cursor follows
-your index knuckle, so move your whole hand, not just your fingers. The green box grows as you trace.
+Show Preview starts the camera and shows the skeleton Vision found, plus a dashed green box with
+corner handles: that box is the part of the frame that maps to your whole screen. Drag the box to
+move it, or drag a corner to resize it; the result is saved as your box, the same as a calibration,
+and Settings > Tracking > Use automatic goes back to the automatic layout. Beside the camera, a
+panel lists every bound gesture with its picture and action. The one your hand is making lights
+up, and each pinch has a bar showing how close that fingertip is to the thumb, so you can watch a
+pinch about to fire and see which finger Conductor thinks is closest. Calibrate Reach measures the box
+instead, from the area you actually reach while tracing it for six seconds. The cursor follows your
+index knuckle, so move your whole hand, not just your fingers. The green box grows as you trace.
 
 Show Hand Map, in the menu bar menu, puts a small always-on-top map in the bottom-right corner while
 tracking runs. It shows the box and a dot for your hand, red when the hand is outside the box, so
@@ -141,7 +170,7 @@ Settings > Displays has four modes:
   until the hand drops out of frame.
 - Main display only.
 - Display you're looking at. The box maps onto whichever screen your head is turned toward. Needs
-  look calibration first. Switch display (thumb + ring pinch) overrides it by hand.
+  look calibration first. Switch display (point at the screen) overrides it by hand.
 
 ### Look calibration
 
@@ -173,11 +202,21 @@ result needs little else. A weak one is saved but can pick the wrong screen near
 them; that's typical when leaning back. The run fails if the screens are too close to tell apart,
 or if it didn't see your face while the dot was on a screen.
 
-Switch display moves the box to the next screen by hand: top to bottom, then left to right, and
-around again. It's bound to thumb + ring pinch by default and can go on any trigger in Settings >
-Gestures. In "Display you're looking at" it sticks until you turn your head toward a different
-screen, so the head doesn't undo it straight away. It also works in "Display under the cursor".
-It's the dependable option when you sit far back.
+Switch display moves the box by hand. The default trigger is the pointing sign: index finger out,
+thumb out, the other fingers curled, held for about a third of a second. The cursor ring fills in
+indigo while you hold it and the preview label says so. Point up for the screen
+above, down for the one below, left or right for a screen beside. With nothing that way, or on any
+other trigger bound to Switch display, the box goes to the next screen: top to bottom, then left to
+right, and around again, which with two screens is simply the other one. The thumb has to be out: a
+relaxed pointing hand rests the thumb on the curled fingers, and that doesn't count, so hovering
+with one finger out can't switch. A finger aimed straight at the camera has no readable direction
+and doesn't count either.
+
+In "Display you're looking at" a switch sticks until your head has turned toward a different screen
+for as long as a normal look switch takes, so neither the head nor a flicker at the edge between
+screens undoes it. It also works in "Display under the cursor". It's the dependable option when you
+sit far back. Rebind it in Settings > Gestures if the sign is awkward; it used to be thumb + ring
+pinch, which pulls on the little finger.
 
 Side-by-side and stacked layouts both work. A few things keep them predictable:
 
@@ -218,6 +257,18 @@ Look calibration frames are logged too, with the label "Calibrating look". A not
 dot starts and stops being sampled, naming the display, and a last note holds the fitted pass and
 its separation, or why it failed. Turn the log on before calibrating to keep a record of the run.
 
+A logged run can be scored again from the log, which is how a calibration that misbehaved at
+someone's desk gets diagnosed:
+
+```sh
+CONDUCTOR_LOOK_LOG=~/Library/Logs/Conductor/gestures-2026-10-06-120000.jsonl \
+  swift test --filter LookReplayTests/testARealLogReplaysToTheScoreTheAppShowed
+```
+
+It prints the displays, sample count, the logged outcome, and the refitted averages, spreads and
+separation, and fails if the refit disagrees with what the app showed (angles are logged to a tenth
+of a degree, so the second decimal can differ).
+
 ## Tuning
 
 Menu bar > Settings. Start with the control box: make it as small as you can while still aiming
@@ -246,9 +297,11 @@ Sources/Conductor/
                  the input gate. Hands and a time in, cursor and input commands out
   Camera/        AVCaptureSession wrapper, camera choice, brightness/confidence checks
   Tracking/      Vision hand pose and face requests, the HandPose model (open hand, fist, two
-                 fingers), the FacePose model (head angles, eyes), the gesture log
-  Gestures/      GestureMap, GestureRecognizer (control, pause, scroll mode, dwell, swipes), ControlBox,
-                 ScreenMapper, calibration, One Euro filter, pointer helpers, ScrollPolicy
+                 fingers, the pointing sign), the FacePose model (head angles, eyes), the gesture
+                 log and the look calibration replay
+  Gestures/      GestureMap, GestureRecognizer (control, pause, scroll lever and scroll mode, dwell,
+                 swipes, pointing), ControlBox, ScreenMapper, calibration, One Euro filter, pointer
+                 helpers, ScrollPolicy, LookPicker
   Control/       CGEvent posting (incl. held modifier keys), Accessibility check, global hotkey
   Feedback/      Cursor ring overlay, hand map, sounds and VoiceOver announcements
   MenuBar/       Status item and menu

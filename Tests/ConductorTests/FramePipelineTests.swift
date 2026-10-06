@@ -64,7 +64,22 @@ final class FramePipelineTests: XCTestCase {
         XCTAssertTrue(commands.contains(.leftUp(clickCount: 1)))
     }
 
+    func testAFistHeldAboveWhereItClosedScrollsUntilItOpensAndNeverCoasts() {
+        frame([PoseFixtures.openHand()])
+        frame([PoseFixtures.fist()], count: 2)
+        XCTAssertEqual(scrolls, [], "at neutral: nothing")
+        frame([PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.36))], count: 10)
+        XCTAssertGreaterThanOrEqual(scrolls.count, 9, "a steady rate while held off centre")
+        XCTAssertTrue(scrolls.allSatisfy { $0 < 0 }, "hand up scrolls content up: negative wheel")
+        commands = []
+        frame([PoseFixtures.openHand(at: CGPoint(x: 0.5, y: 0.36))], count: 10)
+        XCTAssertEqual(scrolls, [], "letting go stops at once")
+        frame([PoseFixtures.openHand()], count: 3)
+        XCTAssertEqual(scrolls, [], "bringing the hand back scrolls nothing")
+    }
+
     func testAFistFlickScrollsThenCoastsThenStopsOnAClick() {
+        pipeline = makePipeline { $0.scrollStyle = .travel }
         frame([PoseFixtures.openHand()])
         for i in 0..<6 { frame([PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.3 + 0.02 * CGFloat(i)))]) }
         let live = scrolls
@@ -86,6 +101,7 @@ final class FramePipelineTests: XCTestCase {
         map[.littlePinch] = .pauseTracking
         pipeline = makePipeline(map: map)
         for i in 0..<6 { frame([PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.3 + 0.02 * CGFloat(i)))]) }
+        frame([PoseFixtures.openHand(at: CGPoint(x: 0.5, y: 0.4))]) // fingers must open after the fist
         frame([PoseFixtures.pinched(.littleTip, at: CGPoint(x: 0.5, y: 0.4))], count: 3)
         XCTAssertEqual(last?.recognized.mode, .paused)
         commands = []
@@ -217,28 +233,44 @@ final class FramePipelineTests: XCTestCase {
 
     // MARK: Switch display
 
-    func testARingPinchSwitchesDisplayAndTheHeadDoesNotUndoIt() {
+    /// The shipped pointing hold, with a frame to spare, then the hand opens.
+    private func point(_ direction: Direction, face: FacePose? = nil) {
+        frame([PoseFixtures.pointingSign(direction)], face: face, count: 11)
+        frame([PoseFixtures.openHand()], face: face, count: 2)
+    }
+
+    func testPointingDownSwitchesToTheDisplayBelowAndTheHeadDoesNotUndoIt() {
         pipeline = makeLookPipeline()
         let atTop = FaceFixtures.face(pitchDegrees: 2)
         drifting(atTop, count: 5)
         XCTAssertEqual(pipeline.screen, top)
-        frame([PoseFixtures.pinched(.ringTip)], face: atTop, count: 3) // the shipped pinch hold
-        XCTAssertEqual(pipeline.screen, bottom, "no dwell")
-        frame([PoseFixtures.pinched(.ringTip)], face: atTop, count: 5)
-        XCTAssertEqual(pipeline.screen, bottom, "one switch per pinch")
+        frame([PoseFixtures.pointingSign(.down)], face: atTop, count: 11)
+        XCTAssertEqual(pipeline.screen, bottom, "no look dwell, just the sign's hold")
+        frame([PoseFixtures.pointingSign(.down)], face: atTop, count: 20)
+        XCTAssertEqual(pipeline.screen, bottom, "one switch per sign")
         commands = []
         drifting(atTop, count: Int(4 * LookPicker.dwell / dt))
         XCTAssertEqual(pipeline.screen, bottom, "still facing the old display doesn't switch back")
         XCTAssertTrue(moves.suffix(3).allSatisfy { bottom.contains($0) })
     }
 
+    func testPointingWhereThereIsNoDisplayGoesToTheNextOne() {
+        pipeline = makeLookPipeline()
+        let atTop = FaceFixtures.face(pitchDegrees: 2)
+        drifting(atTop, count: 5)
+        point(.up, face: atTop)
+        XCTAssertEqual(pipeline.screen, bottom, "nothing above the top display: the other one")
+        point(.left, face: atTop)
+        XCTAssertEqual(pipeline.screen, top, "nothing beside either: wraps around")
+    }
+
     func testAfterASwitchTurningTheHeadAwayAndBackPicksByHeadAgain() {
         pipeline = makeLookPipeline()
         let atTop = FaceFixtures.face(pitchDegrees: 2), atBottom = FaceFixtures.face(pitchDegrees: 12)
         drifting(atTop, count: 5)
-        frame([PoseFixtures.pinched(.ringTip)], face: atTop, count: 3)
+        point(.down, face: atTop)
         XCTAssertEqual(pipeline.screen, bottom)
-        drifting(atBottom, count: 3)
+        drifting(atBottom, count: Int(LookPicker.dwell / dt) + 3)
         XCTAssertEqual(pipeline.screen, bottom)
         drifting(atTop, count: 2)
         XCTAssertEqual(pipeline.screen, bottom, "the dwell still applies")
@@ -250,7 +282,7 @@ final class FramePipelineTests: XCTestCase {
         pipeline = makePipeline(displays: ["top": top, "bottom": bottom])
         let screen = pipeline.screen, box = pipeline.box
         frame([PoseFixtures.openHand()])
-        frame([PoseFixtures.pinched(.ringTip)], count: 5)
+        point(.down)
         XCTAssertEqual(pipeline.screen, screen)
         XCTAssertEqual(pipeline.box, box)
         XCTAssertTrue(commands.allSatisfy { if case .move = $0 { return true } else { return false } })
@@ -260,18 +292,28 @@ final class FramePipelineTests: XCTestCase {
         pipeline = makePipeline(displays: ["top": top, "bottom": bottom]) { $0.displayMode = .followCursor }
         frame([PoseFixtures.openHand()])
         XCTAssertEqual(pipeline.screen, bottom, "the cursor at 500, 500 sits on the bottom display")
-        func ringPinch() {
-            frame([PoseFixtures.pinched(.ringTip)], count: 3)
-            frame([PoseFixtures.openHand()], count: 2)
-        }
         _ = pipeline.setInputAllowed(false)
-        ringPinch()
+        point(.up)
         XCTAssertEqual(pipeline.screen, bottom, "skipped like any other action")
         _ = pipeline.setInputAllowed(true)
-        ringPinch()
-        XCTAssertEqual(pipeline.screen, top, "wraps from the last display to the first")
-        ringPinch()
-        XCTAssertEqual(pipeline.screen, bottom)
+        point(.up)
+        XCTAssertEqual(pipeline.screen, top)
+        point(.up)
+        XCTAssertEqual(pipeline.screen, bottom, "nothing above: wraps from the first display to the last")
+    }
+
+    func testTheDirectionPicksTheNearestDisplayThatWay() {
+        let left = CGRect(x: -1000, y: 0, width: 1000, height: 500)
+        let farLeft = CGRect(x: -2000, y: 0, width: 1000, height: 500)
+        let all = [top, bottom, left, farLeft]
+        XCTAssertEqual(FramePipeline.display(from: top, toward: .down, in: all), bottom)
+        XCTAssertEqual(FramePipeline.display(from: bottom, toward: .up, in: all), top)
+        XCTAssertEqual(FramePipeline.display(from: top, toward: .left, in: all), left, "the nearest, not the furthest")
+        XCTAssertEqual(FramePipeline.display(from: left, toward: .right, in: all), top)
+        XCTAssertNil(FramePipeline.display(from: top, toward: .up, in: all))
+        XCTAssertNil(FramePipeline.display(from: top, toward: .right, in: all))
+        XCTAssertEqual(FramePipeline.display(from: bottom, toward: .left, in: all), left, "more left than up from bottom")
+        XCTAssertNil(FramePipeline.display(from: left, toward: .down, in: all), "bottom is more right than down from left")
     }
 
     func testTheControlBoxFollowsTheSettings() {

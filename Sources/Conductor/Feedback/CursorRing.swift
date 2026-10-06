@@ -4,8 +4,9 @@ import QuartzCore
 
 /// A small ring that follows the cursor and shows what Conductor is about to do:
 /// cyan fills as a pinch closes, orange as a dwell click counts down, green while the ready pose
-/// is held. It flashes when a click lands. In scroll mode it stays up in purple, with an arrow for
-/// the way the page is scrolling. The window ignores the mouse, so it never gets in the way.
+/// is held, indigo as the pointing sign's hold counts down. It flashes when a click lands. While
+/// scrolling it stays up in purple, with an arrow for the way the page is going. The window
+/// ignores the mouse, so it never gets in the way.
 @MainActor
 final class CursorRing {
     private let window: NSPanel
@@ -72,13 +73,15 @@ final class CursorRing {
     }
 
     private func update(feedback: GestureRecognizer.Feedback, mode: GestureRecognizer.Mode, visible: Bool) {
+        let scrolling = mode == .scrollMode || mode == .scroll
         let (progress, color): (CGFloat, NSColor) = {
-            if mode == .scrollMode { return (1, Self.scrollColor) }
+            if scrolling { return (1, Self.scrollColor) }
             if mode == .waiting { return (feedback.ready, .systemGreen) }
+            if feedback.point > 0.02 { return (feedback.point, .systemIndigo) }
             if feedback.dwell > 0.02 { return (feedback.dwell, .systemOrange) }
             return (feedback.pinch, NSColor(calibratedRed: 0.36, green: 0.78, blue: 0.98, alpha: 1))
         }()
-        let show = visible && (progress > 0.03 || mode == .drag || mode == .scrollMode)
+        let show = visible && (progress > 0.03 || mode == .drag || scrolling)
         guard show else {
             if window.isVisible { window.orderOut(nil) }
             return
@@ -87,7 +90,7 @@ final class CursorRing {
         CATransaction.setDisableActions(true)
         arc.strokeColor = color.cgColor
         arc.strokeEnd = mode == .drag ? 1 : progress
-        setArrow(mode == .scrollMode ? feedback.scrollDirection : nil)
+        setArrow(scrolling ? feedback.scrollDirection : nil)
         CATransaction.commit()
         moveToCursor()
         if !window.isVisible { window.orderFrontRegardless() }

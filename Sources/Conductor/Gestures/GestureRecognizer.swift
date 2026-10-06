@@ -39,8 +39,8 @@ struct GestureRecognizer {
         case scroll(dy: CGFloat)
         /// Spread change since the last frame, normalized frame units. Positive zooms in.
         case zoom(delta: CGFloat)
-        /// Move the control box to the next display.
-        case switchDisplay
+        /// Move the control box to the display in this direction, or with none, to the next one.
+        case switchDisplay(toward: Direction?)
     }
 
     /// State changes the UI cares about (sounds, VoiceOver, status text). Not input.
@@ -63,6 +63,8 @@ struct GestureRecognizer {
         var ready: CGFloat = 0
         /// In scroll mode: 1 scrolling down the page, -1 up, 0 at rest.
         var scrollDirection = 0
+        /// How far along the pointing sign's hold is. 1 while the sign is held after firing.
+        var point: CGFloat = 0
     }
 
     struct Output {
@@ -74,6 +76,8 @@ struct GestureRecognizer {
         var label: String
         var events: [Event] = []
         var feedback = Feedback()
+        /// The trigger held or forming this frame, for the preview's gesture panel.
+        var trigger: Trigger?
     }
 
     enum MainHand: String, CaseIterable, Identifiable {
@@ -97,8 +101,18 @@ struct GestureRecognizer {
         var doubleClickInterval: TimeInterval = 0.4
         /// Pointer stays frozen after a button engages until the hand moves this far (frame units).
         var pinchDeadZone: CGFloat = 0.012
-        /// Frames of missing hand tolerated before buttons are released.
-        var lostFrameTolerance: Int = 4
+        /// Frames of missing hand tolerated before buttons are released. Vision drops a pinched hand
+        /// for up to six frames at a time in recorded logs; releasing a held key or drag over that
+        /// cancelled dictation mid-sentence.
+        var lostFrameTolerance: Int = 12
+        /// Two pinches this close in distance count as a tie, and the finger further along the
+        /// hand wins: reaching the thumb to the ring finger drags it past the middle finger, so the
+        /// middle looks pinched too. The index never loses a tie.
+        var pinchTieMargin: CGFloat = 0.06
+        /// Frames a held middle, ring or little pinch may be kept by a neighbouring fingertip alone
+        /// (see isEngaged). Vision's swaps last a frame or two; a hand that really opened
+        /// shouldn't be held longer than this.
+        var neighbourSwapFrames = 3
         /// Which hand drives the cursor when two are visible.
         var mainHand: MainHand = .right
         /// Require an open hand held still before anything moves.
@@ -131,6 +145,8 @@ struct GestureRecognizer {
         var crossRelease: CGFloat = 0.1
         /// Seconds the fingers must stay crossed, so a hand passing through the shape doesn't fire.
         var crossHold: TimeInterval = 0.3
+        /// Seconds the pointing sign (index out, thumb out, others curled) must hold before it fires.
+        var pointHold: TimeInterval = 0.3
         /// Scroll mode: after the switch gesture is let go, the hand has this long to settle, and
         /// where it is then becomes neutral. Uncrossing the fingers can't scroll.
         var neutralSettle: TimeInterval = 0.3
@@ -142,6 +158,10 @@ struct GestureRecognizer {
         /// Scroll speed per unit of knuckle offset past the dead zone, as frame units of travel per
         /// second. At 4, an offset 0.05 past the dead zone scrolls 800 px/s at the default speed.
         var scrollRate: CGFloat = 4
+        /// A held scroll trigger (fist, two fingers) works as a lever too: where the knuckles were
+        /// when it engaged is neutral, and holding them above or below it scrolls at a steady rate.
+        /// Off, the page follows the hand's travel instead and a flick can coast.
+        var scrollLever = true
     }
 
     var config: Config
@@ -185,9 +205,17 @@ struct GestureRecognizer {
     private var unposedFrames = 0
     /// The pinch that's closed this frame and when it closed, whether or not it engaged.
     private var pinchSince: (trigger: Trigger, time: TimeInterval)?
+    /// Fingertips seen clear of the thumb since the last trigger started or ended. Only these can
+    /// pinch: opening a fist, or letting go of one pinch, swings fingertips past the thumb, and in
+    /// recorded logs that clicked. Full to begin with, so a hand that arrives pinched still works.
+    private var openedFingers: Set<HandJoint> = Set(Trigger.pinches.compactMap(\.fingertip))
+    /// Frames in a row that the held pinch's own fingertip has read as open (see isEngaged).
+    private var neighbourFrames = 0
     /// Index and middle crossed this frame (with hysteresis), and since when.
     private var crossed = false
     private var crossedSince: TimeInterval?
+    /// When the pointing sign formed with a readable direction, while it holds.
+    private var pointingSince: TimeInterval?
     private(set) var inScrollMode = false
     /// In scroll mode: the trigger that switched in, still held. It must be let go and made again
     /// to switch back, like the pause trigger.
@@ -257,7 +285,9 @@ struct GestureRecognizer {
         lostFrames = 0
         lastSeen = time
         trackPinch(primary, at: time)
+        trackNeighbourHold(primary)
         trackCrossed(primary, at: time)
+        trackPointing(primary, at: time)
         trackTwoFingerPose(primary)
 
         let other = hands.count >= 2
@@ -355,6 +385,9 @@ struct GestureRecognizer {
         // plain predicates.
         if let current = active, !isEngaged(current, primary: primary, other: other, holding: true) {
             actions += deactivate(at: time, asClick: true)
+            // The fingers have to open before the next pinch. Note what's open right now, so a
+            // hand that is already open can pinch again on the next frame.
+            trackPinch(primary, at: time)
         }
 
         // Pick a new trigger, or let a higher-priority one preempt. Order: two hands, fist, then the
@@ -373,14 +406,19 @@ struct GestureRecognizer {
 
         // Motion deltas start the frame after activation, when there is a previous sample.
         if let trigger = active, !justActivated {
-            actions += motion(for: trigger, primary: primary, other: other)
+            actions += motion(for: trigger, primary: primary, other: other, at: time)
         }
 
         let action = active.map { map[$0] } ?? .none
         let pointer = pointerOutput(primary: primary, action: action)
-        var feedback = Feedback(pinch: pinchFeedback(primary))
+        var feedback = Feedback(pinch: pinchFeedback(primary), scrollDirection: Self.scrollDirection(of: actions))
+        if active == .indexPoint {
+            feedback.point = 1
+        } else if pointIsForming, let since = pointingSince {
+            feedback.point = min(1, CGFloat((time - since) / config.pointHold))
+        }
 
-        if config.dwellClick, active == nil, !crossIsForming, let live = primary.pointer {
+        if config.dwellClick, active == nil, !crossIsForming, !pointIsForming, let live = primary.pointer {
             let (dwellActions, progress) = dwell(at: live, time: time)
             actions += dwellActions
             feedback.dwell = progress
@@ -390,7 +428,8 @@ struct GestureRecognizer {
         }
 
         mode = Self.mode(for: action)
-        let label = active.map { "\($0.title): \(map[$0].title)" } ?? Mode.point.rawValue
+        let label = active.map { "\($0.title): \(map[$0].title)" }
+            ?? (pointIsForming ? "\(Trigger.indexPoint.title): hold…" : Mode.point.rawValue)
         return output(mode, pointer: pointer, actions: actions, label: label, feedback: feedback)
     }
 
@@ -428,7 +467,7 @@ struct GestureRecognizer {
             return output(.swipe, pointer: nil, actions: actions, label: swipe.title)
         }
         if active == .twoFingers, !justActivated {
-            actions += motion(for: .twoFingers, primary: primary, other: other)
+            actions += motion(for: .twoFingers, primary: primary, other: other, at: time)
         }
         guard active == .twoFingers else {
             mode = .swipe
@@ -436,7 +475,14 @@ struct GestureRecognizer {
         }
         let action = map[.twoFingers]
         mode = Self.mode(for: action)
-        return output(mode, pointer: nil, actions: actions, label: "\(Trigger.twoFingers.title): \(action.title)")
+        return output(mode, pointer: nil, actions: actions, label: "\(Trigger.twoFingers.title): \(action.title)",
+                      feedback: Feedback(scrollDirection: Self.scrollDirection(of: actions)))
+    }
+
+    /// For the cursor ring: 1 scrolling down the page, -1 up, 0 at rest or not scrolling.
+    private static func scrollDirection(of actions: [Action]) -> Int {
+        for case .scroll(let dy) in actions where dy != 0 { return dy > 0 ? 1 : -1 }
+        return 0
     }
 
     // MARK: Scroll mode
@@ -479,11 +525,27 @@ struct GestureRecognizer {
             lastScrollTime = nil
             return output(.scrollMode, pointer: nil, actions: actions, label: "Scroll mode: let go, then rest your hand")
         }
-        if neutral == nil { neutral = (knuckles.y, time + config.neutralSettle) }
+        // The hand just uncrossed its fingers; give it a moment to settle before neutral locks.
+        guard let lever = leverTravel(knuckles: knuckles, settle: config.neutralSettle, at: time) else {
+            return output(.scrollMode, pointer: nil, actions: actions, label: "Scroll mode: rest your hand")
+        }
+        actions.append(.scroll(dy: lever.travel))
+        let label = ["Scroll mode: scrolling up", "Scroll mode: at rest", "Scroll mode: scrolling down"][lever.direction + 1]
+        return output(.scrollMode, pointer: nil, actions: actions, label: label,
+                      feedback: Feedback(scrollDirection: lever.direction))
+    }
+
+    /// The lever: knuckle height from neutral, past the dead zone, becomes a scroll rate. Neutral
+    /// follows the hand for `settle` seconds after the lever starts, then locks. Nil while it's
+    /// settling. Positive travel is the hand above neutral, which ScrollPolicy turns into scrolling
+    /// down the page.
+    private mutating func leverTravel(knuckles: CGPoint, settle: TimeInterval,
+                                      at time: TimeInterval) -> (travel: CGFloat, direction: Int)? {
+        if neutral == nil { neutral = (knuckles.y, time + settle) }
         if let settling = neutral, time < settling.lockedAt {
             neutral = (knuckles.y, settling.lockedAt)
             lastScrollTime = nil
-            return output(.scrollMode, pointer: nil, actions: actions, label: "Scroll mode: rest your hand")
+            return nil
         }
         let offset = knuckles.y - (neutral?.y ?? knuckles.y)
         let excess = max(0, abs(offset) - config.scrollDeadZone)
@@ -491,11 +553,7 @@ struct GestureRecognizer {
         // Capped like ScrollPolicy, so a dropped frame can't become one giant step.
         let dt = lastScrollTime.map { min(time - $0, 0.1) } ?? 0
         lastScrollTime = time
-        // Positive travel is the hand going up, which ScrollPolicy turns into scrolling down the page.
-        actions.append(.scroll(dy: CGFloat(direction) * excess * config.scrollRate * CGFloat(dt)))
-        let label = ["Scroll mode: scrolling up", "Scroll mode: at rest", "Scroll mode: scrolling down"][direction + 1]
-        return output(.scrollMode, pointer: nil, actions: actions, label: label,
-                      feedback: Feedback(scrollDirection: direction))
+        return (CGFloat(direction) * excess * config.scrollRate * CGFloat(dt), direction)
     }
 
     private mutating func enterScrollMode(heldBy trigger: Trigger?) {
@@ -562,7 +620,7 @@ struct GestureRecognizer {
         case .scrollMode:
             enterScrollMode(heldBy: nil)
             return []
-        case .switchDisplay: return [.switchDisplay]
+        case .switchDisplay: return [.switchDisplay(toward: nil)]
         case .scroll, .zoom, .none: return []
         }
     }
@@ -633,12 +691,38 @@ struct GestureRecognizer {
             return twoFingersHeld
         case .crossedFingers:
             return crossed
+        case .indexPoint:
+            // Starting needs a direction to act on; once held, the sign alone keeps it held, so a
+            // finger drifting toward the lens doesn't drop it and fire again on the way back.
+            return holding ? primary.isPointingSign : pointingSince != nil
         case .indexPinch, .middlePinch, .ringPinch, .littlePinch:
             // Only starting a pinch needs a clear view of the finger. A held one stays held.
-            return pinchDistance(primary, trigger.fingertip!) < threshold
-                && (holding || pinchCanStart(primary, trigger.fingertip!))
+            if pinchDistance(primary, trigger.fingertip!) < threshold {
+                return holding || pinchCanStart(primary, trigger.fingertip!)
+            }
+            // Vision swaps neighbouring fingertips on a hand with the thumb across it, which made
+            // the ring distance jump open for a frame while the little finger read as pinched. A
+            // held middle, ring or little pinch stays held while a neighbouring tip is still at the
+            // thumb. Not the index: a click must release the moment the index opens.
+            return holding && trigger != .indexPinch && neighbourFrames <= config.neighbourSwapFrames
+                && Self.neighbours[trigger, default: []].contains { pinchDistance(primary, $0.fingertip!) < threshold }
         }
     }
+
+    /// Counts frames the held pinch's own fingertip has read as open, which is how long a
+    /// neighbouring tip has been keeping it held. Runs every frame with a hand, before the hold is
+    /// checked.
+    private mutating func trackNeighbourHold(_ hand: HandPose) {
+        guard let active, let tip = active.fingertip, pinchDistance(hand, tip) >= config.pinchRelease else {
+            neighbourFrames = 0
+            return
+        }
+        neighbourFrames += 1
+    }
+
+    private static let neighbours: [Trigger: [Trigger]] = [
+        .middlePinch: [.indexPinch, .ringPinch], .ringPinch: [.middlePinch, .littlePinch], .littlePinch: [.ringPinch],
+    ]
 
     private func chooseTrigger(primary: HandPose, other: HandPose?, at time: TimeInterval) -> Trigger? {
         let bound: (Trigger) -> Bool = { self.map[$0] != .none }
@@ -653,23 +737,38 @@ struct GestureRecognizer {
         if active == .crossedFingers { return nil }
         if bound(.fist), primary.isFist { return .fist }
         if active == .fist { return nil }
+        if bound(.indexPoint), pointingSince != nil {
+            // Forming: nothing else starts. The thumb is out, so no pinch could anyway.
+            return heldLongEnough(.indexPoint, at: time) ? .indexPoint : nil
+        }
+        if active == .indexPoint { return nil }
         if active != nil { return nil } // a held pinch is never swapped for a sibling pinch
         guard let pinch = pinchSince?.trigger, heldLongEnough(pinch, at: time) else { return nil }
         return pinch
     }
 
-    /// The bound pinch closed this frame: the one whose fingertip is nearest the thumb.
+    /// The bound pinch closed this frame: the one whose fingertip is nearest the thumb, except
+    /// that on a tie (see `pinchTieMargin`) the finger further along the hand wins, unless the
+    /// index is the nearest. Fingers that haven't opened since the last trigger don't count.
     private func closedPinch(_ hand: HandPose) -> Trigger? {
-        Trigger.pinches
-            .filter { map[$0] != .none && pinchCanStart(hand, $0.fingertip!) }
+        let closed = Trigger.pinches
+            .filter { map[$0] != .none && openedFingers.contains($0.fingertip!) && pinchCanStart(hand, $0.fingertip!) }
             .map { ($0, pinchDistance(hand, $0.fingertip!)) }
             .filter { $0.1 < config.pinchEngage }
-            .min { $0.1 < $1.1 }?.0
+            .sorted { $0.1 < $1.1 }
+        guard let nearest = closed.first else { return nil }
+        if nearest.0 == .indexPinch { return .indexPinch }
+        return closed.filter { $0.1 - nearest.1 <= config.pinchTieMargin }
+            .max { Trigger.pinches.firstIndex(of: $0.0)! < Trigger.pinches.firstIndex(of: $1.0)! }?.0
     }
 
-    /// Remembers when the closed pinch closed. Runs every frame with a hand, in every state, so a
-    /// pinch that resumes from a pause waits just as long as one that engages.
+    /// Remembers when the closed pinch closed, and which fingertips have been clear of the thumb.
+    /// Runs every frame with a hand, in every state, so a pinch that resumes from a pause waits
+    /// just as long as one that engages.
     private mutating func trackPinch(_ hand: HandPose, at time: TimeInterval) {
+        for tip in Trigger.pinches.compactMap(\.fingertip) where pinchDistance(hand, tip) > config.pinchRelease {
+            openedFingers.insert(tip)
+        }
         if let pinch = closedPinch(hand) {
             if pinchSince?.trigger != pinch { pinchSince = (pinch, time) }
         } else {
@@ -689,9 +788,33 @@ struct GestureRecognizer {
         }
     }
 
+    /// Whether the pointing sign is up with a readable direction, and since when. Runs every frame
+    /// with a hand, like trackPinch.
+    private mutating func trackPointing(_ hand: HandPose, at time: TimeInterval) {
+        guard pointDirection(hand) != nil else {
+            pointingSince = nil
+            return
+        }
+        if pointingSince == nil { pointingSince = time }
+    }
+
+    /// Which way the index finger points in the pointing sign, as the user sees it. Nil outside
+    /// the sign, and nil when the finger looks too short to read, which is a finger aimed at the
+    /// lens. The larger axis wins, so a slightly tilted finger still reads as up or down.
+    private func pointDirection(_ hand: HandPose) -> Direction? {
+        guard hand.isPointingSign, let v = hand.indexVector,
+              (hand.visibleLength(of: .indexTip) ?? 0) >= config.minimumFingerLength else { return nil }
+        // Vision x grows to the camera's right. With mirroring that is the user's left.
+        let dx = v.dx * (config.mirrored ? -1 : 1)
+        if abs(v.dy) >= abs(dx) { return v.dy > 0 ? .up : .down }
+        return dx > 0 ? .right : .left
+    }
+
     /// Crossed fingers that mean something. Crossed fingers also have index and middle up and the
     /// others curled, so while this holds they aren't the two-finger pose, and nothing else fires.
     private var crossIsForming: Bool { crossed && map[.crossedFingers] != .none }
+    /// The pointing sign that means something, held still long enough to be a dwell otherwise.
+    private var pointIsForming: Bool { pointingSince != nil && map[.indexPoint] != .none }
 
     /// Debounces the two-finger pose: a few frames to start and a few missing to end, so a loose
     /// hand passing through it doesn't scroll or swipe and a one-frame flicker can't fire twice.
@@ -703,10 +826,13 @@ struct GestureRecognizer {
         twoFingersHeld = bound && (twoFingersHeld ? unposedFrames < Self.poseFrames : posedFrames >= Self.poseFrames)
     }
 
-    /// Whether a pinch has held `pinchHold`. Other triggers don't wait.
+    /// Whether a pinch has held `pinchHold`, or a shape its own hold. Other triggers don't wait.
     private func heldLongEnough(_ trigger: Trigger, at time: TimeInterval) -> Bool {
         if trigger == .crossedFingers {
             return crossedSince.map { time - $0 >= config.crossHold } ?? false
+        }
+        if trigger == .indexPoint {
+            return pointingSince.map { time - $0 >= config.pointHold } ?? false
         }
         guard Trigger.pinches.contains(trigger) else { return true }
         guard let since = pinchSince, since.trigger == trigger else { return false }
@@ -731,6 +857,11 @@ struct GestureRecognizer {
         active = trigger
         lastPalmY = primary.palmCenter?.y
         lastSpread = spread(primary, other)
+        // A scroll lever starts fresh from where this trigger engaged.
+        neutral = nil
+        lastScrollTime = nil
+        // Whatever comes next, the fingers have to open first.
+        openedFingers.removeAll()
         switch map[trigger] {
         case .leftButton:
             let count = (time - lastLeftUpTime) < config.doubleClickInterval ? lastClickCount + 1 : 1
@@ -752,7 +883,8 @@ struct GestureRecognizer {
             enterScrollMode(heldBy: trigger)
             active = nil
             return []
-        case .switchDisplay: return [.switchDisplay]
+        case .switchDisplay:
+            return [.switchDisplay(toward: trigger == .indexPoint ? pointDirection(primary) : nil)]
         case .scroll, .zoom, .none: return []
         }
     }
@@ -765,6 +897,8 @@ struct GestureRecognizer {
         dragOffset = .zero
         lastPalmY = nil
         lastSpread = nil
+        openedFingers.removeAll()
+        neighbourFrames = 0
         switch map[trigger] {
         case .leftButton:
             lastLeftUpTime = asClick ? time : -1
@@ -776,9 +910,15 @@ struct GestureRecognizer {
         }
     }
 
-    private mutating func motion(for trigger: Trigger, primary: HandPose, other: HandPose?) -> [Action] {
+    private mutating func motion(for trigger: Trigger, primary: HandPose, other: HandPose?, at time: TimeInterval) -> [Action] {
         switch map[trigger] {
         case .scroll:
+            if config.scrollLever {
+                // Curling the fingers doesn't move the knuckles, so neutral can lock at once.
+                guard let knuckles = primary.knuckleCenter,
+                      let lever = leverTravel(knuckles: knuckles, settle: 0, at: time) else { return [] }
+                return [.scroll(dy: lever.travel)]
+            }
             guard let y = primary.palmCenter?.y else { return [] }
             defer { lastPalmY = y }
             guard let previous = lastPalmY else { return [] }
@@ -841,6 +981,7 @@ struct GestureRecognizer {
         dwellAnchor = nil
         crossed = false
         crossedSince = nil
+        pointingSince = nil
         // switchHeld survives: a hand that comes back still crossed mustn't switch straight back out.
         neutral = nil
         mode = .idle
@@ -851,7 +992,8 @@ struct GestureRecognizer {
 
     private func output(_ mode: Mode, pointer: CGPoint?, actions: [Action], label: String,
                         feedback: Feedback = Feedback()) -> Output {
-        Output(mode: mode, pointer: pointer, actions: actions, label: label, events: events, feedback: feedback)
+        Output(mode: mode, pointer: pointer, actions: actions, label: label, events: events, feedback: feedback,
+               trigger: active ?? switchHeld ?? (pointIsForming ? .indexPoint : nil))
     }
 
     private static func mode(for action: GestureAction) -> Mode {

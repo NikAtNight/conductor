@@ -245,33 +245,35 @@ struct LookPicker {
         let p = pitch * 180 / .pi, y = yaw * 180 / .pi
         let distances = targets.map { (uuid: $0.displayUUID, distance: Self.distance(pitch: p, yaw: y, to: $0, spread: spread)) }
         guard let best = distances.min(by: { $0.distance < $1.distance }) else { return current }
-        if hold.active {
-            if hold.headPick == nil { hold.headPick = best.uuid }
-            if best.uuid == hold.headPick {
-                candidate = nil
-                return current
-            }
-            hold = (false, nil)
-        }
-        guard let current, let mine = distances.first(where: { $0.uuid == current }) else {
-            current = best.uuid
+        if hold.active, hold.headPick == nil { hold.headPick = best.uuid }
+        guard let current else {
+            self.current = best.uuid
             candidate = nil
-            return current
+            return best.uuid
         }
-        guard best.uuid != current, mine.distance - best.distance >= Self.margin else {
+        // What the head has to leave: during a hold, where it pointed at the switch; otherwise the
+        // current display. Leaving takes the same margin and dwell as a switch, so edge jitter on a
+        // weak calibration can't release a hold and then undo the switch.
+        let anchor = hold.active ? hold.headPick ?? current : current
+        let anchorDistance = distances.first { $0.uuid == anchor }?.distance ?? .infinity
+        guard best.uuid != anchor, anchorDistance - best.distance >= Self.margin else {
             candidate = nil
             return current
         }
         if candidate?.uuid != best.uuid { candidate = (best.uuid, time) }
-        if !locked, let candidate, time - candidate.since >= Self.dwell {
+        guard let candidate, time - candidate.since >= Self.dwell else { return current }
+        hold = (false, nil)
+        if candidate.uuid == current {
+            self.candidate = nil
+        } else if !locked {
             self.current = candidate.uuid
             self.candidate = nil
         }
         return self.current
     }
 
-    /// A manual switch (the Switch display action). Sticks until the head turns toward a
-    /// different display than the one it points at now.
+    /// A manual switch (the Switch display action). Sticks until the head has turned toward a
+    /// different display than the one it points at now, for as long as a normal switch takes.
     mutating func override(to uuid: String) {
         current = uuid
         candidate = nil

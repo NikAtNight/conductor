@@ -32,7 +32,7 @@ struct TrackingSettingsView: View {
                     }
                     Button("Calibrate…", action: calibrate)
                 }
-                Caption("Calibrating measures the area you can comfortably reach and uses it as the box, replacing the size, shape, and camera-position settings. The dashed box in the preview maps to your screens. Smaller means less arm travel but coarser aim. Matching the shape keeps up-down and left-right moves at the same speed, which matters most for stacked screens.")
+                Caption("Calibrating measures the area you can comfortably reach and uses it as the box, replacing the size, shape, and camera-position settings. The dashed box in the preview maps to your screens, and you can drag it there: inside to move it, a corner to resize it. That saves it like a calibration. Smaller means less arm travel but coarser aim. Matching the shape keeps up-down and left-right moves at the same speed, which matters most for stacked screens. The box only places the cursor; scrolling and the hand signs work anywhere the camera sees your hand.")
             }
             Section("Feel") {
                 SettingSlider(title: "Smoothing cutoff", value: $preferences.smoothing, range: 0.1...3.0, format: "%.1f Hz")
@@ -42,8 +42,13 @@ struct TrackingSettingsView: View {
                 Caption("Thumb-to-index distance in hand widths. Release must stay above engage or clicks will chatter.")
                 SettingSlider(title: "Click dead zone", value: $preferences.pinchDeadZone, range: 0.005...0.05, format: "%.1f%%", scale: 100)
                 Caption("How far your hand can drift during a pinch before a click becomes a drag. Raise it if clicks keep turning into small drags.")
+                Picker("Scroll by", selection: $preferences.scrollStyle) {
+                    ForEach(Preferences.ScrollStyle.allCases) { Text($0.title).tag($0) }
+                }
+                Caption("Hold your hand off centre: make a fist (or raise two fingers), then hold your hand above where it was to scroll down the page, or below to scroll up. Farther is faster, and letting go stops. Nothing moves when you bring your hand back. Move your hand: the page follows your hand instead, like a trackpad, and a flick can coast.")
                 SettingSlider(title: "Scroll speed", value: $preferences.scrollGain, range: 0.2...3.0, format: "%.1fx")
                 Toggle("Keep scrolling after a flick", isOn: $preferences.momentumScroll)
+                    .disabled(preferences.scrollStyle != .travel)
             }
             Section("Zoom") {
                 Picker("Send zoom as", selection: $preferences.zoomWithKeys) {

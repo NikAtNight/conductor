@@ -87,7 +87,7 @@ final class GestureRecognizerTests: XCTestCase {
         var r = GestureRecognizer(config: .instant)
         _ = r.update(hands: [PoseFixtures.pinched()], at: 0)
         var actions: [Action] = []
-        for i in 1...6 { actions += r.update(hands: [], at: Double(i) * dt).actions }
+        for i in 1...14 { actions += r.update(hands: [], at: Double(i) * dt).actions }
         XCTAssertEqual(actions, [.leftUp(clickCount: 1)])
         XCTAssertEqual(r.mode, .idle)
     }
@@ -103,7 +103,7 @@ final class GestureRecognizerTests: XCTestCase {
     }
 
     func testFistScrollsByPalmTravel() {
-        var r = GestureRecognizer(config: .instant)
+        var r = GestureRecognizer(config: .travelScroll)
         _ = r.update(hands: [PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.3))], at: 0)
         let out = r.update(hands: [PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.34))], at: dt)
         XCTAssertEqual(out.mode, .scroll)
@@ -165,5 +165,98 @@ final class PinchDisambiguationTests: XCTestCase {
         var r = GestureRecognizer(config: .instant)
         let actions = r.update(hands: [PoseFixtures.pinched()], at: 0).actions
         XCTAssertEqual(actions, [.leftDown(clickCount: 1)])
+    }
+}
+
+/// Pinch handling tuned from Nikhil's push-to-talk logs: fingers passing the thumb while a hand
+/// opens, neighbouring fingertips swapped by Vision, two fingers at the thumb at once, and the hand
+/// dropping out of view for a few frames.
+final class PinchRobustnessTests: XCTestCase {
+    typealias Action = GestureRecognizer.Action
+    let dt = 1.0 / 30
+    let rightCommand = Shortcut(keyCode: 54, modifiers: 0)
+
+    private func pushToTalk() -> GestureRecognizer {
+        var map = GestureMap.standard
+        map[.ringPinch] = .holdKey(rightCommand)
+        return GestureRecognizer(config: .instant, map: map)
+    }
+
+    private func run(_ r: inout GestureRecognizer, _ hands: [HandPose], from frame: Int, count: Int) -> [Action] {
+        (frame..<(frame + count)).flatMap { r.update(hands: hands, at: Double($0) * dt).actions }
+    }
+
+    func testOpeningAFistPastTheThumbDoesNotClick() {
+        var r = GestureRecognizer(config: .instant)
+        _ = run(&r, [PoseFixtures.openHand()], from: 0, count: 2)
+        _ = run(&r, [PoseFixtures.fist()], from: 2, count: 5)
+        // The index tip meets the thumb on the way open: this clicked in the logs.
+        let opening = run(&r, [PoseFixtures.pinched()], from: 7, count: 3)
+        XCTAssertFalse(opening.contains(.leftDown(clickCount: 1)))
+        // Once the hand has opened, a pinch is a pinch again.
+        _ = run(&r, [PoseFixtures.openHand()], from: 10, count: 2)
+        XCTAssertTrue(run(&r, [PoseFixtures.pinched()], from: 12, count: 2).contains(.leftDown(clickCount: 1)))
+    }
+
+    func testLettingGoOfOnePinchIntoAnotherDoesNotFireTheSecond() {
+        var r = pushToTalk()
+        _ = run(&r, [PoseFixtures.openHand()], from: 0, count: 2)
+        XCTAssertEqual(run(&r, [PoseFixtures.pinched(.ringTip)], from: 2, count: 3), [.keyDown(rightCommand)])
+        // Straight from the ring pinch into an index pinch without opening: key up, no click.
+        let swapped = run(&r, [PoseFixtures.pinched(.indexTip)], from: 5, count: 4)
+        XCTAssertEqual(swapped, [.keyUp(rightCommand)])
+    }
+
+    func testAHandThatArrivesPinchedStillClicks() {
+        var r = GestureRecognizer(config: .instant)
+        XCTAssertTrue(run(&r, [PoseFixtures.pinched()], from: 0, count: 2).contains(.leftDown(clickCount: 1)))
+    }
+
+    func testAHeldRingPinchSurvivesTheTipSwappingWithTheLittleFinger() {
+        var r = pushToTalk()
+        _ = run(&r, [PoseFixtures.openHand()], from: 0, count: 2)
+        XCTAssertEqual(run(&r, [PoseFixtures.pinched(.ringTip)], from: 2, count: 3), [.keyDown(rightCommand)])
+        // One frame where Vision puts the little tip at the thumb and the ring tip far away.
+        var swapped = PoseFixtures.pinched(.littleTip)
+        swapped.joints[.ringTip] = PoseFixtures.openHand()[.ringTip]
+        XCTAssertEqual(run(&r, [swapped], from: 5, count: 2), [], "still held")
+        XCTAssertEqual(run(&r, [PoseFixtures.pinched(.ringTip)], from: 7, count: 2), [])
+        XCTAssertEqual(run(&r, [PoseFixtures.openHand()], from: 9, count: 1), [.keyUp(rightCommand)])
+    }
+
+    func testAnIndexPinchReleasesEvenWithTheMiddleFingerAtTheThumb() {
+        var r = GestureRecognizer(config: .instant)
+        _ = run(&r, [PoseFixtures.openHand()], from: 0, count: 1)
+        _ = run(&r, [PoseFixtures.pinched()], from: 1, count: 2)
+        var middleClose = PoseFixtures.openHand()
+        middleClose.joints[.middleTip] = CGPoint(x: middleClose[.thumbTip]!.x + 0.01, y: middleClose[.thumbTip]!.y)
+        XCTAssertEqual(run(&r, [middleClose], from: 3, count: 1), [.leftUp(clickCount: 1)])
+    }
+
+    func testRingBeatsMiddleWhenBothTouchTheThumb() {
+        var r = pushToTalk()
+        _ = run(&r, [PoseFixtures.openHand()], from: 0, count: 2)
+        var both = PoseFixtures.pinched(.ringTip)
+        let thumb = both[.thumbTip]!
+        both.joints[.middleTip] = CGPoint(x: thumb.x - 0.004, y: thumb.y)  // a hair closer than the ring
+        XCTAssertEqual(run(&r, [both], from: 2, count: 3), [.keyDown(rightCommand)], "not a right click")
+    }
+
+    func testTheIndexNeverLosesATie() {
+        var r = GestureRecognizer(config: .instant)
+        _ = run(&r, [PoseFixtures.openHand()], from: 0, count: 2)
+        var both = PoseFixtures.pinched(.indexTip)
+        let thumb = both[.thumbTip]!
+        both.joints[.middleTip] = CGPoint(x: thumb.x, y: thumb.y + 0.011)
+        XCTAssertEqual(run(&r, [both], from: 2, count: 2).first, .leftDown(clickCount: 1))
+    }
+
+    func testTheHandCanDropOutForTenFramesWithoutLettingGo() {
+        var r = pushToTalk()
+        _ = run(&r, [PoseFixtures.openHand()], from: 0, count: 2)
+        XCTAssertEqual(run(&r, [PoseFixtures.pinched(.ringTip)], from: 2, count: 3), [.keyDown(rightCommand)])
+        XCTAssertEqual(run(&r, [], from: 5, count: 10), [], "a six-frame dropout happened in the logs")
+        XCTAssertEqual(run(&r, [PoseFixtures.pinched(.ringTip)], from: 15, count: 2), [])
+        XCTAssertEqual(run(&r, [], from: 17, count: 12).last, .keyUp(rightCommand), "gone for good")
     }
 }

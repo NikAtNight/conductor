@@ -24,7 +24,7 @@ final class HoldKeyTests: XCTestCase {
         var r = recognizer()
         _ = r.update(hands: [PoseFixtures.pinched(.ringTip)], at: 0)
         var actions: [GestureRecognizer.Action] = []
-        for i in 1...6 { actions += r.update(hands: [], at: Double(i) * dt).actions }
+        for i in 1...14 { actions += r.update(hands: [], at: Double(i) * dt).actions }
         XCTAssertEqual(actions, [.keyUp(rightCommand)])
     }
 
