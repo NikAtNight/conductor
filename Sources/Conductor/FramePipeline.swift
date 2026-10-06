@@ -163,6 +163,8 @@ struct FramePipeline {
         }
         let recognized = recognizer.update(hands: hands, at: time)
         wasIdle = recognized.mode == .idle
+        // Before the pointer maps, so this frame's cursor already lands on the new display.
+        if inputAllowed, recognized.actions.contains(.switchDisplay) { switchDisplay() }
         var commands: [InputCommand] = []
         var cursor: CGPoint?
         if let pointer = recognized.pointer {
@@ -231,6 +233,7 @@ struct FramePipeline {
         case .keyDown(let s): return [.keyDown(s)]
         case .keyUp(let s): return [.keyUp(s)]
         case .scroll: return [] // ScrollPolicy turns travel into pixels
+        case .switchDisplay: return [] // step moves the target; nothing to post
         case .zoom(let delta):
             guard prefs.zoomWithKeys else {
                 // Cmd+scroll zooms in browsers, Preview, Maps and most editors. Spreading the hands
@@ -259,6 +262,25 @@ struct FramePipeline {
         let locked = [.drag, .scroll, .zoom].contains(recognizer.mode) || recognizer.isHoldingTrigger
         guard let uuid = lookPicker?.update(face, at: time, locked: locked),
               let next = lookDisplays[uuid], next != screen else { return }
+        moveTarget(to: next)
+    }
+
+    /// The Switch display action: the next display top to bottom, then left to right, wrapping
+    /// around. Only the modes that target one display; in look mode the picker is told, so the
+    /// head doesn't switch straight back.
+    private mutating func switchDisplay() {
+        guard prefs.displayMode == .lookedAt || prefs.displayMode == .followCursor else { return }
+        let ordered = displays.sorted { ($0.minY, $0.minX) < ($1.minY, $1.minX) }
+        guard ordered.count > 1 else { return }
+        let next = ordered[(ordered.firstIndex(of: screen).map { $0 + 1 } ?? 0) % ordered.count]
+        if prefs.displayMode == .lookedAt, let uuid = lookDisplays.first(where: { $0.value == next })?.key {
+            lookPicker?.override(to: uuid)
+        }
+        moveTarget(to: next)
+    }
+
+    /// Retargets mid-session, keeping the cursor's place.
+    private mutating func moveTarget(to next: CGRect) {
         if prefs.pointerMode == .relative, screen.width > 0, screen.height > 0 {
             // Same fractional spot on the new screen, so the cursor arrives rather than jumps to a corner.
             relativeCursor = CGPoint(
@@ -314,7 +336,7 @@ extension GestureRecognizer.Action {
     /// Whether this action ends a coasting scroll.
     var interruptsScrolling: Bool {
         switch self {
-        case .leftDown, .rightClick, .middleClick, .shortcut, .zoom: return true
+        case .leftDown, .rightClick, .middleClick, .shortcut, .zoom, .switchDisplay: return true
         case .leftUp, .keyDown, .keyUp, .scroll: return false
         }
     }

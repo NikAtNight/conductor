@@ -159,7 +159,18 @@ final class Preferences: ObservableObject {
         scrollGain = d("scrollGain", 1.0)
         zoomWithKeys = b("zoomWithKeys", false)
         displayMode = DisplayMode(rawValue: defaults.string(forKey: "displayMode") ?? "") ?? .all
-        gestureMap = GestureMap.load(from: defaults)
+        var map = GestureMap.load(from: defaults)
+        // The ring pinch did nothing by default before Switch display existed, so saved maps have it
+        // unbound. Bind it once; someone who unbinds it again keeps it unbound. Saved here because
+        // nothing saves during init.
+        if !defaults.bool(forKey: "switchDisplayDefault") {
+            if map[.ringPinch] == .none {
+                map[.ringPinch] = .switchDisplay
+                map.save(to: defaults)
+            }
+            defaults.set(true, forKey: "switchDisplayDefault")
+        }
+        gestureMap = map
         matchScreenShape = b("matchScreenShape", true)
         mainHand = GestureRecognizer.MainHand(rawValue: defaults.string(forKey: "mainHand") ?? "") ?? .right
         requireReadyPose = b("requireReadyPose", true)
@@ -199,17 +210,11 @@ final class Preferences: ObservableObject {
         }
         cameraPlacement = defaults.data(forKey: "cameraPlacement")
             .flatMap { try? JSONDecoder().decode(CameraPlacement.self, from: $0) }
-        lookModel = defaults.data(forKey: "lookModel").flatMap(Self.decodeLookModel)
+        // Models saved as angle ranges, before averages and spreads, don't decode and read as not
+        // calibrated: ranges can't be turned back into the spreads the picker needs.
+        lookModel = defaults.data(forKey: "lookModel")
+            .flatMap { try? JSONDecoder().decode(LookModel.self, from: $0) }
         loaded = true
-    }
-
-    /// A saved look model, including the flat single-pass shape the first builds wrote, which
-    /// loads as pass one so nobody has to calibrate again.
-    private static func decodeLookModel(_ data: Data) -> LookModel? {
-        if let model = try? JSONDecoder().decode(LookModel.self, from: data) { return model }
-        struct Flat: Decodable { var targets: [LookModel.Target]; var faceHeight: Double }
-        guard let flat = try? JSONDecoder().decode(Flat.self, from: data) else { return nil }
-        return LookModel(targets: flat.targets, faceHeight: flat.faceHeight)
     }
 
     func resetToDefaults() {

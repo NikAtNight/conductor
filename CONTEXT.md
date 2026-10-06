@@ -53,8 +53,16 @@ Following a dot around each display's corners so Conductor learns the head angle
 _Avoid_: gaze calibration, eye calibration
 
 **Look model**:
-The per-display head angle ranges that look calibration saves.
+The average head angle and its spread for each display, one pass per sitting distance, that look calibration saves.
 _Avoid_: gaze model
+
+**Separation**:
+How far apart two displays' average head angles are, measured in how much the head wanders on each. Decides whether a look calibration is clear, weak, or refused.
+_Avoid_: accuracy, confidence
+
+**Switch display**:
+The action that moves the control box to the next display by hand, overriding the look pick until the head turns elsewhere.
+_Avoid_: next screen, display override
 
 **Frame pipeline**:
 Everything that happens to one camera frame after hand detection, ending in the cursor position and the input commands to post.

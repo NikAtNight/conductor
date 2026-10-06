@@ -7,26 +7,49 @@ final class LookModelStorageTests: XCTestCase {
         UserDefaults(suiteName: "LookModelStorageTests.\(UUID())")!
     }
 
-    func testAModelRoundTripsThroughPreferences() {
-        let suite = defaults()
-        let model = LookModel(passes: [
-            LookModel.Pass(faceHeight: 0.25, targets: [LookModel.Target(displayUUID: "a", pitch: 5...6.5, yaw: -3...3)]),
-            LookModel.Pass(faceHeight: 0.38, targets: [LookModel.Target(displayUUID: "a", pitch: -17.5...4, yaw: -26...20)]),
+    private var twoPassModel: LookModel {
+        func target(_ pitch: LookModel.Spread, _ yaw: LookModel.Spread) -> LookModel.Target {
+            LookModel.Target(displayUUID: "a", pitch: pitch, yaw: yaw)
+        }
+        return LookModel(passes: [
+            LookModel.Pass(faceHeight: 0.30, targets: [target(.init(mean: -2.8, sd: 3.7), .init(mean: -3.2, sd: 7.8))]),
+            LookModel.Pass(faceHeight: 0.377, targets: [target(.init(mean: -6.7, sd: 6.5), .init(mean: -3, sd: 14))]),
         ])
+    }
+
+    func testATwoPassModelRoundTripsThroughPreferences() {
+        let suite = defaults()
+        let model = twoPassModel
         Preferences(defaults: suite).lookModel = model
         XCTAssertEqual(Preferences(defaults: suite).lookModel, model)
     }
 
-    func testAFlatSinglePassFromTheFirstBuildsLoadsAsOnePass() throws {
-        // What the first builds wrote: the pass's fields at the top level, no `passes` array.
+    func testAModelSavedAsAngleRangesLoadsAsNotCalibrated() {
+        let old = """
+        {"passes":[{"faceHeight":0.3,"targets":[{"displayUUID":"a","pitch":[-8.9,3.3],"yaw":[-16,9.6]}]}]}
+        """
+        let suite = defaults()
+        suite.set(Data(old.utf8), forKey: "lookModel")
+        XCTAssertNil(Preferences(defaults: suite).lookModel)
+    }
+
+    func testAFlatSinglePassFromTheFirstBuildsLoadsAsNotCalibrated() {
         let flat = """
         {"targets":[{"displayUUID":"a","pitch":[-17.5,4.0],"yaw":[-26.6,20.6]}],"faceHeight":0.377}
         """
         let suite = defaults()
         suite.set(Data(flat.utf8), forKey: "lookModel")
-        let model = try XCTUnwrap(Preferences(defaults: suite).lookModel)
-        XCTAssertEqual(model.passes.count, 1)
-        XCTAssertEqual(model.passes[0].faceHeight, 0.377)
-        XCTAssertEqual(model.passes[0].targets.first?.displayUUID, "a")
+        XCTAssertNil(Preferences(defaults: suite).lookModel)
+    }
+
+    func testLoadingPreferencesDoesNotOverwriteTheSavedModel() {
+        let suite = defaults()
+        let model = twoPassModel
+        Preferences(defaults: suite).lookModel = model
+        // Opening and dropping Preferences again must leave the stored model alone, however many
+        // times, since init sets the published properties one by one.
+        _ = Preferences(defaults: suite)
+        _ = Preferences(defaults: suite)
+        XCTAssertEqual(Preferences(defaults: suite).lookModel, model)
     }
 }

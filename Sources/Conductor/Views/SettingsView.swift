@@ -92,7 +92,7 @@ struct DisplaySettingsView: View {
                         Button("Calibrate Look…", action: calibrateLook)
                     }
                 }
-                Caption("Calibrating walks a dot around the corners of each screen and measures where your head points. Run it once from each place you usually sit: further back your head moves less and your eyes do more, so one pass can't cover both. Do it again if you move the camera or the screens. Forget drops every pass.")
+                Caption("Calibrating walks a dot around the corners of each screen and measures where your head points. Run it once from each place you usually sit: further back your head moves less and your eyes do more, so one pass can't cover both. Do it again if you move the camera or the screens. Forget drops every pass. Switch display, on thumb + ring pinch by default, moves the box to the other screen by hand.")
             }
             Section("Camera position") {
                 CameraPlacementView(preferences: preferences)

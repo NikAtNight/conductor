@@ -153,12 +153,13 @@ final class FramePipelineTests: XCTestCase {
     let top = CGRect(x: 0, y: 0, width: 1000, height: 500)
     let bottom = CGRect(x: 0, y: 500, width: 1000, height: 500)
 
-    /// Two stacked displays and a model that puts the top one at pitch 0...5 and the bottom at
-    /// 10...15. The face fixture's box is 0.4 tall, so the model's distance matches it.
+    /// Two stacked displays and a model that puts the top one around pitch 2.5 and the bottom around
+    /// 12.5. The face fixture's box is 0.4 tall, so the model's distance matches it.
     private func makeLookPipeline() -> FramePipeline {
+        let yaw = LookModel.Spread(mean: 0, sd: 3)
         let model = LookModel(targets: [
-            LookModel.Target(displayUUID: "top", pitch: 0...5, yaw: -10...10),
-            LookModel.Target(displayUUID: "bottom", pitch: 10...15, yaw: -10...10),
+            LookModel.Target(displayUUID: "top", pitch: LookModel.Spread(mean: 2.5, sd: 1.5), yaw: yaw),
+            LookModel.Target(displayUUID: "bottom", pitch: LookModel.Spread(mean: 12.5, sd: 1.5), yaw: yaw),
         ], faceHeight: 0.4)
         return makePipeline(displays: ["top": top, "bottom": bottom]) {
             $0.displayMode = .lookedAt
@@ -212,6 +213,65 @@ final class FramePipelineTests: XCTestCase {
         drifting(FaceFixtures.face(pitchDegrees: 12), count: Int(LookPicker.dwell / dt) + 3)
         XCTAssertEqual(pipeline.screen, bottom)
         XCTAssertEqual(pipeline.box, onTop, "the head picked the screen; the hand shouldn't have to reach for it")
+    }
+
+    // MARK: Switch display
+
+    func testARingPinchSwitchesDisplayAndTheHeadDoesNotUndoIt() {
+        pipeline = makeLookPipeline()
+        let atTop = FaceFixtures.face(pitchDegrees: 2)
+        drifting(atTop, count: 5)
+        XCTAssertEqual(pipeline.screen, top)
+        frame([PoseFixtures.pinched(.ringTip)], face: atTop, count: 3) // the shipped pinch hold
+        XCTAssertEqual(pipeline.screen, bottom, "no dwell")
+        frame([PoseFixtures.pinched(.ringTip)], face: atTop, count: 5)
+        XCTAssertEqual(pipeline.screen, bottom, "one switch per pinch")
+        commands = []
+        drifting(atTop, count: Int(4 * LookPicker.dwell / dt))
+        XCTAssertEqual(pipeline.screen, bottom, "still facing the old display doesn't switch back")
+        XCTAssertTrue(moves.suffix(3).allSatisfy { bottom.contains($0) })
+    }
+
+    func testAfterASwitchTurningTheHeadAwayAndBackPicksByHeadAgain() {
+        pipeline = makeLookPipeline()
+        let atTop = FaceFixtures.face(pitchDegrees: 2), atBottom = FaceFixtures.face(pitchDegrees: 12)
+        drifting(atTop, count: 5)
+        frame([PoseFixtures.pinched(.ringTip)], face: atTop, count: 3)
+        XCTAssertEqual(pipeline.screen, bottom)
+        drifting(atBottom, count: 3)
+        XCTAssertEqual(pipeline.screen, bottom)
+        drifting(atTop, count: 2)
+        XCTAssertEqual(pipeline.screen, bottom, "the dwell still applies")
+        drifting(atTop, count: Int(LookPicker.dwell / dt) + 3)
+        XCTAssertEqual(pipeline.screen, top)
+    }
+
+    func testSwitchDisplayDoesNothingAcrossAllDisplays() {
+        pipeline = makePipeline(displays: ["top": top, "bottom": bottom])
+        let screen = pipeline.screen, box = pipeline.box
+        frame([PoseFixtures.openHand()])
+        frame([PoseFixtures.pinched(.ringTip)], count: 5)
+        XCTAssertEqual(pipeline.screen, screen)
+        XCTAssertEqual(pipeline.box, box)
+        XCTAssertTrue(commands.allSatisfy { if case .move = $0 { return true } else { return false } })
+    }
+
+    func testFollowCursorSwitchesAndWrapsOnlyWithInputAllowed() {
+        pipeline = makePipeline(displays: ["top": top, "bottom": bottom]) { $0.displayMode = .followCursor }
+        frame([PoseFixtures.openHand()])
+        XCTAssertEqual(pipeline.screen, bottom, "the cursor at 500, 500 sits on the bottom display")
+        func ringPinch() {
+            frame([PoseFixtures.pinched(.ringTip)], count: 3)
+            frame([PoseFixtures.openHand()], count: 2)
+        }
+        _ = pipeline.setInputAllowed(false)
+        ringPinch()
+        XCTAssertEqual(pipeline.screen, bottom, "skipped like any other action")
+        _ = pipeline.setInputAllowed(true)
+        ringPinch()
+        XCTAssertEqual(pipeline.screen, top, "wraps from the last display to the first")
+        ringPinch()
+        XCTAssertEqual(pipeline.screen, bottom)
     }
 
     func testTheControlBoxFollowsTheSettings() {

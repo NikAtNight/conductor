@@ -69,6 +69,8 @@ enum GestureAction: Codable, Equatable, Hashable {
     case scrollMode
     /// Holds a key down for as long as the trigger is held: push-to-talk.
     case holdKey(Shortcut)
+    /// Moves the control box to the next display, for when the head can't tell the screens apart.
+    case switchDisplay
 
     enum Shape { case button, tap, motion, inert }
 
@@ -76,7 +78,7 @@ enum GestureAction: Codable, Equatable, Hashable {
         switch self {
         case .none: return .inert
         case .leftButton, .holdKey: return .button
-        case .rightClick, .middleClick, .shortcut, .pauseTracking, .scrollMode: return .tap
+        case .rightClick, .middleClick, .shortcut, .pauseTracking, .scrollMode, .switchDisplay: return .tap
         case .scroll, .zoom: return .motion
         }
     }
@@ -93,6 +95,7 @@ enum GestureAction: Codable, Equatable, Hashable {
         case .pauseTracking: return "Pause / resume"
         case .scrollMode: return "Scroll mode on / off"
         case .holdKey(let s): return "Hold \(s.display)"
+        case .switchDisplay: return "Switch display"
         }
     }
 
@@ -100,7 +103,7 @@ enum GestureAction: Codable, Equatable, Hashable {
 
     /// The pickable kinds. Key actions carry no key here; the UI fills it in with the recorder.
     static let menuChoices: [GestureAction] = [
-        .leftButton, .rightClick, .middleClick, .scroll, .zoom, .shortcut(unsetKey), .holdKey(unsetKey), .scrollMode, .pauseTracking, .none,
+        .leftButton, .rightClick, .middleClick, .scroll, .zoom, .shortcut(unsetKey), .holdKey(unsetKey), .switchDisplay, .scrollMode, .pauseTracking, .none,
     ]
 
     /// The key a shortcut or hold-key action carries.
@@ -136,7 +139,7 @@ struct GestureMap: Codable, Equatable {
     static let standard = GestureMap(bindings: [
         .indexPinch: .leftButton,
         .middlePinch: .rightClick,
-        .ringPinch: .none,
+        .ringPinch: .switchDisplay,
         .littlePinch: .none,
         .fist: .scroll,
         .twoHandPinch: .zoom,

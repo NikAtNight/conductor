@@ -4,15 +4,25 @@ import Foundation
 /// Where each display sits in head-angle space, measured by look calibration. Angles are degrees
 /// with Vision's signs: pitch positive looking down, yaw positive turning counterclockwise.
 ///
+/// Each display is summarised by the average head angle while looking around it and how far the
+/// head strayed from that average. Ranges were tried first and failed: the corner walk makes the
+/// two screens' ranges overlap near the edge they share, and inside the overlap nothing could
+/// win, so the pick stuck on one screen.
+///
 /// One pass per sitting distance. Up close the head follows the eyes; further back it moves far
 /// less than the geometry says because the eyes do more of the work, so a single pass can't be
 /// scaled to cover both. Passes are anchors and the picker interpolates between them.
 struct LookModel: Codable, Equatable {
+    /// Average and standard deviation of one head angle, degrees.
+    struct Spread: Codable, Equatable {
+        var mean: Double
+        var sd: Double
+    }
+
     struct Target: Codable, Equatable {
         var displayUUID: String
-        /// Head angles seen while looking around this display, corner to corner.
-        var pitch: ClosedRange<Double>
-        var yaw: ClosedRange<Double>
+        var pitch: Spread
+        var yaw: Spread
     }
 
     /// One calibration run at one distance from the camera.
@@ -45,9 +55,9 @@ struct LookModel: Codable, Equatable {
     }
 
     /// The targets as they look from the distance where the face is `faceHeight` tall. Between
-    /// two passes each bound is interpolated by face height. Beyond the nearest or furthest pass
-    /// the tangent rule scales that pass (see `scaled`). A display missing from one of the two
-    /// bracketing passes is taken from the other as is.
+    /// two passes each average and spread is interpolated by face height. Beyond the nearest or
+    /// furthest pass the tangent rule scales that pass (see `scaled`). A display missing from one
+    /// of the two bracketing passes is taken from the other as is.
     func targets(atFaceHeight faceHeight: Double) -> [Target] {
         guard let first = passes.first, let last = passes.last else { return [] }
         if faceHeight <= first.faceHeight { return Self.scaled(first, to: faceHeight) }
@@ -57,10 +67,8 @@ struct LookModel: Codable, Equatable {
         }
         let far = passes[upper - 1], near = passes[upper]
         let t = (faceHeight - far.faceHeight) / (near.faceHeight - far.faceHeight)
-        func mix(_ a: ClosedRange<Double>, _ b: ClosedRange<Double>) -> ClosedRange<Double> {
-            let lo = a.lowerBound + t * (b.lowerBound - a.lowerBound)
-            let hi = a.upperBound + t * (b.upperBound - a.upperBound)
-            return min(lo, hi)...max(lo, hi)
+        func mix(_ a: Spread, _ b: Spread) -> Spread {
+            Spread(mean: a.mean + t * (b.mean - a.mean), sd: a.sd + t * (b.sd - a.sd))
         }
         var result: [Target] = []
         for a in far.targets {
@@ -77,19 +85,50 @@ struct LookModel: Codable, Equatable {
     private static func scaled(_ pass: Pass, to faceHeight: Double) -> [Target] {
         let ratio = pass.faceHeight > 0 ? faceHeight / pass.faceHeight : 1
         guard ratio != 1 else { return pass.targets } // atan(tan(x)) isn't exactly x in floating point
-        return pass.targets.map {
-            Target(displayUUID: $0.displayUUID, pitch: scaled($0.pitch, by: ratio), yaw: scaled($0.yaw, by: ratio))
+        func scale(_ s: Spread) -> Spread {
+            // Small angles: the spread scales about like the tangent does.
+            Spread(mean: scaled(s.mean, by: ratio), sd: s.sd * ratio)
         }
+        return pass.targets.map { Target(displayUUID: $0.displayUUID, pitch: scale($0.pitch), yaw: scale($0.yaw)) }
     }
 
-    /// A range measured at one distance, as it looks from another. The angle to a point on a screen
-    /// has tan(angle) = offset / distance, and face height is proportional to 1 / distance, so the
-    /// tangent scales with the face height ratio. Only a rough guide: real heads move less than
-    /// this when far away, which is what extra passes are for.
-    static func scaled(_ range: ClosedRange<Double>, by ratio: Double) -> ClosedRange<Double> {
-        func scale(_ degrees: Double) -> Double { atan(tan(degrees * .pi / 180) * ratio) * 180 / .pi }
-        let a = scale(range.lowerBound), b = scale(range.upperBound)
-        return min(a, b)...max(a, b)
+    /// An angle measured at one distance, as it looks from another. The angle to a point on a
+    /// screen has tan(angle) = offset / distance, and face height is proportional to 1 / distance,
+    /// so the tangent scales with the face height ratio. Only a rough guide: real heads move less
+    /// than this when far away, which is what extra passes are for.
+    static func scaled(_ degrees: Double, by ratio: Double) -> Double {
+        atan(tan(degrees * .pi / 180) * ratio) * 180 / .pi
+    }
+
+    /// The typical spread on each axis across these targets, the unit the picker measures in.
+    /// Pooled over displays so the boundary between two screens falls midway between their
+    /// averages. Floored so a very still head doesn't make every degree look huge.
+    static func pooledSpread(_ targets: [Target]) -> (pitch: Double, yaw: Double) {
+        func pool(_ sds: [Double]) -> Double {
+            guard !sds.isEmpty else { return minimumSpread }
+            return max((sds.map { $0 * $0 }.reduce(0, +) / Double(sds.count)).squareRoot(), minimumSpread)
+        }
+        return (pool(targets.map(\.pitch.sd)), pool(targets.map(\.yaw.sd)))
+    }
+
+    static let minimumSpread = 1.0
+
+    /// How far apart two displays' averages are, in pooled spreads. The bigger, the more reliably
+    /// the head tells them apart; see LookCalibration's thresholds.
+    static func separation(_ a: Target, _ b: Target, spread: (pitch: Double, yaw: Double)) -> Double {
+        let dp = (a.pitch.mean - b.pitch.mean) / spread.pitch
+        let dy = (a.yaw.mean - b.yaw.mean) / spread.yaw
+        return (dp * dp + dy * dy).squareRoot()
+    }
+
+    /// The closest pair of displays in this pass, by `separation`. Infinity with one display.
+    static func weakestSeparation(_ pass: Pass) -> Double {
+        let spread = pooledSpread(pass.targets)
+        var weakest = Double.infinity
+        for (i, a) in pass.targets.enumerated() {
+            for b in pass.targets.dropFirst(i + 1) { weakest = min(weakest, separation(a, b, spread: spread)) }
+        }
+        return weakest
     }
 }
 
@@ -106,8 +145,17 @@ enum LookCalibration {
     enum Failure: Error, Equatable {
         /// The face wasn't seen enough while this display's targets were up.
         case tooFewSamples(displayUUID: String)
-        /// Two displays' angle rectangles overlap so much the head can't tell them apart.
+        /// Two displays' averages are too close, relative to how much the head wanders on each,
+        /// for the head to tell them apart.
         case indistinct(String, String)
+    }
+
+    /// How a successful pass separates the screens.
+    enum Quality: Equatable {
+        /// The head tells the screens apart almost everywhere.
+        case clear
+        /// Usable, but near the edge between screens the pick can go either way.
+        case weak
     }
 
     /// How long each target shows, how much of that is ignored while the eyes travel to it, and
@@ -115,8 +163,11 @@ enum LookCalibration {
     static let settle: TimeInterval = 0.5
     static let samplePeriod: TimeInterval = 1.0
     static let minimumSamplesPerDisplay = 15
-    /// Fraction of the smaller rectangle that another may cover before the pair is indistinct.
-    static let maximumOverlap = 0.5
+    /// Separation (pooled spreads between averages) below which a pass is refused, and below
+    /// which it's saved with a warning. A close pass at Nikhil's desk measured about 2.7 and
+    /// worked; a leaning-back pass measured about 2.1 and confused the screens near their edge.
+    static let minimumSeparation = 1.5
+    static let clearSeparation = 2.5
 
     /// A sample from one frame, or nil when Vision didn't report the head angles.
     static func sample(_ face: FacePose, display: String) -> Sample? {
@@ -124,18 +175,20 @@ enum LookCalibration {
         return Sample(displayUUID: display, pitch: pitch * 180 / .pi, yaw: yaw * 180 / .pi, faceHeight: face.box.height)
     }
 
-    /// One target per display, from the 5th to 95th percentile of its samples on each axis so a
-    /// stray frame can't stretch it. The pass's face height is the median over all samples.
+    /// One target per display: the average and spread of its samples on each axis, after
+    /// dropping the 5% furthest out on either side so a stray frame can't drag them. The pass's
+    /// face height is the median over all samples.
     static func pass(from samples: [Sample], displays: [String]) -> Result<LookModel.Pass, Failure> {
         var targets: [LookModel.Target] = []
         for display in displays {
             let mine = samples.filter { $0.displayUUID == display }
             guard mine.count >= minimumSamplesPerDisplay else { return .failure(.tooFewSamples(displayUUID: display)) }
             targets.append(LookModel.Target(displayUUID: display,
-                                            pitch: range(of: mine.map(\.pitch)), yaw: range(of: mine.map(\.yaw))))
+                                            pitch: spread(of: mine.map(\.pitch)), yaw: spread(of: mine.map(\.yaw))))
         }
+        let pooled = LookModel.pooledSpread(targets)
         for (i, a) in targets.enumerated() {
-            for b in targets.dropFirst(i + 1) where overlap(a, b) > maximumOverlap {
+            for b in targets.dropFirst(i + 1) where LookModel.separation(a, b, spread: pooled) < minimumSeparation {
                 return .failure(.indistinct(a.displayUUID, b.displayUUID))
             }
         }
@@ -143,37 +196,37 @@ enum LookCalibration {
         return .success(LookModel.Pass(faceHeight: heights.isEmpty ? 0 : heights[heights.count / 2], targets: targets))
     }
 
-    private static func range(of values: [Double]) -> ClosedRange<Double> {
-        let sorted = values.sorted()
-        func percentile(_ q: Double) -> Double { sorted[Int((Double(sorted.count - 1) * q).rounded())] }
-        return percentile(0.05)...percentile(0.95)
+    static func quality(of pass: LookModel.Pass) -> Quality {
+        LookModel.weakestSeparation(pass) >= clearSeparation ? .clear : .weak
     }
 
-    /// Shared area over the smaller target's area, in degrees squared. Ranges narrower than a
-    /// degree count as a degree so a steady head doesn't make a zero-area target.
-    private static func overlap(_ a: LookModel.Target, _ b: LookModel.Target) -> Double {
-        func span(_ r: ClosedRange<Double>) -> Double { max(r.upperBound - r.lowerBound, 1) }
-        func shared(_ x: ClosedRange<Double>, _ y: ClosedRange<Double>) -> Double {
-            max(0, min(x.upperBound, y.upperBound) - max(x.lowerBound, y.lowerBound))
-        }
-        let intersection = shared(a.pitch, b.pitch) * shared(a.yaw, b.yaw)
-        let smaller = min(span(a.pitch) * span(a.yaw), span(b.pitch) * span(b.yaw))
-        return intersection / smaller
+    private static func spread(of values: [Double]) -> LookModel.Spread {
+        let sorted = values.sorted()
+        let cut = Int(Double(sorted.count) * 0.05)
+        let kept = sorted.count > 2 * cut ? Array(sorted[cut..<(sorted.count - cut)]) : sorted
+        let mean = kept.reduce(0, +) / Double(kept.count)
+        let variance = kept.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(kept.count)
+        return LookModel.Spread(mean: mean, sd: variance.squareRoot())
     }
 }
 
 /// Decides which display the user is looking at, frame by frame, with hysteresis so a glance or
-/// jitter at the seam between screens doesn't move the cursor.
+/// jitter at the edge between screens doesn't move the cursor.
 struct LookPicker {
     var model: LookModel
     /// How long the head must point at another display before the pick changes.
     static let dwell: TimeInterval = 0.25
-    /// Another display must be this many degrees closer than the current one to count. Inside the
-    /// current target the distance is zero, so nothing can beat it: ambiguous means stay put.
-    static let margin: Double = 1.0
+    /// Another display must be this many pooled spreads closer than the current one to count.
+    /// Between two screens that leaves a dead band a quarter spread either side of the midpoint,
+    /// where the pick stays put.
+    static let margin: Double = 0.5
 
     private(set) var current: String?
     private var candidate: (uuid: String, since: TimeInterval)?
+    /// After a manual switch: the display the head pointed at when it happened (nil until the next
+    /// face). The head has to point somewhere else before it can pick again, so a manual switch
+    /// isn't undone the moment it's made.
+    private var hold: (active: Bool, headPick: String?) = (false, nil)
 
     init(model: LookModel) {
         self.model = model
@@ -187,10 +240,19 @@ struct LookPicker {
             candidate = nil
             return current
         }
-        let p = pitch * 180 / .pi, y = yaw * 180 / .pi
         let targets = model.targets(atFaceHeight: face.box.height)
-        let distances = targets.map { (uuid: $0.displayUUID, distance: Self.distance(pitch: p, yaw: y, to: $0)) }
+        let spread = LookModel.pooledSpread(targets)
+        let p = pitch * 180 / .pi, y = yaw * 180 / .pi
+        let distances = targets.map { (uuid: $0.displayUUID, distance: Self.distance(pitch: p, yaw: y, to: $0, spread: spread)) }
         guard let best = distances.min(by: { $0.distance < $1.distance }) else { return current }
+        if hold.active {
+            if hold.headPick == nil { hold.headPick = best.uuid }
+            if best.uuid == hold.headPick {
+                candidate = nil
+                return current
+            }
+            hold = (false, nil)
+        }
         guard let current, let mine = distances.first(where: { $0.uuid == current }) else {
             current = best.uuid
             candidate = nil
@@ -208,10 +270,19 @@ struct LookPicker {
         return self.current
     }
 
-    /// Degrees from a head direction to the nearest point of a target, zero inside it.
-    static func distance(pitch: Double, yaw: Double, to target: LookModel.Target) -> Double {
-        let dp = max(target.pitch.lowerBound - pitch, 0, pitch - target.pitch.upperBound)
-        let dy = max(target.yaw.lowerBound - yaw, 0, yaw - target.yaw.upperBound)
+    /// A manual switch (the Switch display action). Sticks until the head turns toward a
+    /// different display than the one it points at now.
+    mutating func override(to uuid: String) {
+        current = uuid
+        candidate = nil
+        hold = (true, nil)
+    }
+
+    /// Distance from a head direction to a display's average, in pooled spreads.
+    static func distance(pitch: Double, yaw: Double, to target: LookModel.Target,
+                         spread: (pitch: Double, yaw: Double)) -> Double {
+        let dp = (pitch - target.pitch.mean) / spread.pitch
+        let dy = (yaw - target.yaw.mean) / spread.yaw
         return (dp * dp + dy * dy).squareRoot()
     }
 }

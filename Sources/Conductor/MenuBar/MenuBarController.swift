@@ -112,22 +112,39 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 let model = (preferences.lookModel ?? LookModel(passes: [])).adding(pass)
                 preferences.lookModel = model
                 preferences.displayMode = .lookedAt
+                let alert = NSAlert()
+                let switchHint = Self.switchHint(preferences.gestureMap)
+                switch LookCalibration.quality(of: pass) {
+                case .clear:
+                    alert.messageText = "Saved for this distance"
+                    alert.informativeText = "Your head tells the screens apart clearly from here."
+                case .weak:
+                    alert.messageText = "Saved, but it's a close call from here"
+                    alert.informativeText = "Your head moves only a little between screens from this distance, so near the edge between them Conductor may pick the wrong one. \(switchHint)"
+                }
                 // The setup assistant's own text already says to repeat it from other seats.
                 if model.passes.count == 1, self?.setupWindow?.isVisible != true {
-                    let alert = NSAlert()
-                    alert.messageText = "Saved for this distance"
-                    alert.informativeText = "If you also work sitting further back, run Calibrate Look again from there. Conductor keeps one pass per distance."
-                    alert.runModal()
+                    alert.informativeText += "\n\nIf you also work sitting further back, run Calibrate Look again from there. Conductor keeps one pass per distance."
                 }
+                alert.runModal()
             case .failure(let failure)?:
                 let alert = NSAlert()
                 alert.messageText = "Look calibration didn't work"
                 alert.informativeText = Self.message(for: failure, displays: displays)
+                if case .indistinct = failure { alert.informativeText += " \(Self.switchHint(preferences.gestureMap))" }
                 alert.runModal()
             case nil:
                 break
             }
         }
+    }
+
+    /// How to switch screens by hand with the user's current bindings.
+    private static func switchHint(_ map: GestureMap) -> String {
+        guard let trigger = Trigger.allCases.first(where: { map[$0] == .switchDisplay }) else {
+            return "To switch by hand, bind Switch display to a gesture in Settings > Gestures."
+        }
+        return "\(trigger.title) switches screens by hand."
     }
 
     private static func message(for failure: LookCalibration.Failure, displays: [DisplayInfo]) -> String {

@@ -141,20 +141,23 @@ Settings > Displays has four modes:
   until the hand drops out of frame.
 - Main display only.
 - Display you're looking at. The box maps onto whichever screen your head is turned toward. Needs
-  look calibration first.
+  look calibration first. Switch display (thumb + ring pinch) overrides it by hand.
 
 ### Look calibration
 
 Calibrate Look, in the menu bar menu or Settings > Displays, covers every screen and walks a dot
 around each one: the four corners, then the centre, about eight seconds per screen. Follow the dot
-with your eyes and let your head move the way it normally does. Conductor records the head pitch
-and yaw Vision reports while the dot is on each screen and saves the range for that screen. It
-reads the head, not the eyes: pupils are too small and too easily hidden by glasses glare to be
-reliable from a webcam, and for stacked or side-by-side screens the head tilt is enough.
+with your eyes and let your head move the way it normally does. For each screen Conductor saves the
+average head pitch and yaw while the dot was on it, and how far your head strayed from that
+average. It reads the head, not the eyes: pupils are too small and too easily hidden by glasses
+glare to be reliable from a webcam.
 
-When you're looking, the screen whose angle range is closest to your current head angles gets the
-box. Switching takes a quarter of a second of looking at the other screen and never happens
-mid-drag or mid-scroll.
+When you're looking, the screen whose average is nearest your current head angle gets the box.
+Distances are measured in how far your head typically strays, so the line between two screens sits
+midway between their averages, with a small dead band around it where the pick stays put.
+Switching takes a quarter of a second of looking at the other screen and never happens mid-drag or
+mid-scroll. An earlier version saved a range of angles per screen instead; the ranges of stacked
+screens overlapped near the edge they share, and inside the overlap the pick never changed.
 
 Run it once from each place you sit. Measurements showed that further back the head moves only a
 few degrees between stacked screens while the eyes do the rest, so one close pass can't be scaled
@@ -164,9 +167,17 @@ interpolates; beyond the nearest or furthest pass it extrapolates by geometry al
 a rough guide. Recalibrate if you move the camera or rearrange the screens. Forget, in Settings >
 Displays, drops every pass.
 
-Calibration fails if it didn't see your face while the dot was on a screen, or if your head barely
-moved between two screens. For the second, sit a little closer or move your head more and try
-again.
+After each run Conductor says how well your head separated the screens from where you sat. It
+compares the gap between two screens' averages with how much your head wanders on each. A clear
+result needs little else. A weak one is saved but can pick the wrong screen near the edge between
+them; that's typical when leaning back. The run fails if the screens are too close to tell apart,
+or if it didn't see your face while the dot was on a screen.
+
+Switch display moves the box to the next screen by hand: top to bottom, then left to right, and
+around again. It's bound to thumb + ring pinch by default and can go on any trigger in Settings >
+Gestures. In "Display you're looking at" it sticks until you turn your head toward a different
+screen, so the head doesn't undo it straight away. It also works in "Display under the cursor".
+It's the dependable option when you sit far back.
 
 Side-by-side and stacked layouts both work. A few things keep them predictable:
 
@@ -202,6 +213,10 @@ eye is, and a glare figure (the share of near-white pixels over the eye, which c
 reflects in glasses). The face is detected while the log is on, while the display mode is "Display
 you're looking at", and during look calibration. While it is, the preview draws the face box, eye
 outlines and pupils in cyan and shows the head angles next to the frame rate.
+
+Look calibration frames are logged too, with the label "Calibrating look". A note marks when each
+dot starts and stops being sampled, naming the display, and a last note holds the fitted pass and
+its separation, or why it failed. Turn the log on before calibrating to keep a record of the run.
 
 ## Tuning
 

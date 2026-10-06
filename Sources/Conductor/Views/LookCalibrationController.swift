@@ -75,7 +75,10 @@ final class LookCalibrationController {
                 sampling = nil
                 try await Task.sleep(for: .seconds(LookCalibration.settle))
                 sampling = display.uuid
+                let spot = Self.targets[t]
+                engine?.logNote("look calibration: sampling \(display.name) (\(display.uuid)) dot \(t + 1) at \(spot.x),\(spot.y)")
                 try await Task.sleep(for: .seconds(LookCalibration.samplePeriod))
+                engine?.logNote("look calibration: dot \(t + 1) done")
             }
         }
         sampling = nil
@@ -92,12 +95,27 @@ final class LookCalibrationController {
         self.completion = nil
         run = nil
         sampling = nil
+        engine?.logNote("look calibration result: \(Self.describe(result))")
         engine?.stopLookSampling()
         engine = nil
         for window in windows { window.close() }
         windows = []
         overlay.displayIndex = nil
         completion(result)
+    }
+
+    /// The outcome as one log line: the fitted pass as JSON with its weakest separation, the
+    /// failure, or "cancelled".
+    private static func describe(_ result: Result<LookModel.Pass, LookCalibration.Failure>?) -> String {
+        switch result {
+        case .success(let pass)?:
+            let json = (try? JSONEncoder().encode(pass)).map { String(decoding: $0, as: UTF8.self) } ?? "?"
+            return "\(json) separation \(String(format: "%.2f", LookModel.weakestSeparation(pass)))"
+        case .failure(let failure)?:
+            return "failed: \(failure)"
+        case nil:
+            return "cancelled"
+        }
     }
 
     private func open(_ shown: [(DisplayInfo, NSScreen)]) {

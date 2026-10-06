@@ -239,10 +239,25 @@ final class Engine: @unchecked Sendable {
         }
     }
 
+    /// Writes a note to the gesture log, if it's recording. Look calibration marks each dot with
+    /// one, so a log can be split into the samples for each display afterwards.
+    @MainActor
+    func logNote(_ text: String) {
+        camera.queue.async { [self] in gestureLog?.note(text) }
+    }
+
     /// One look-sampling frame. Returns true while sampling, so the caller skips gesture handling.
-    private func lookSamplingStep(_ buffer: CMSampleBuffer, hands: [HandPose], fps: Double) -> Bool {
+    /// Logged like any other frame, so a calibration that goes wrong can be read back.
+    private func lookSamplingStep(_ buffer: CMSampleBuffer, hands: [HandPose], primary: HandPose?, fps: Double,
+                                  now: CFTimeInterval, sinceLastMs: Double?, detectMs: Double) -> Bool {
         guard let onFace else { return false }
+        let faceStart = CACurrentMediaTime()
         let face = faceTracker.detect(in: buffer)
+        let faceMs = (CACurrentMediaTime() - faceStart) * 1000
+        gestureLog?.write(time: Date(), fps: fps, hands: hands, primary: primary, face: face,
+                          output: GestureRecognizer.Output(mode: .idle, pointer: nil, actions: [], label: "Calibrating look"),
+                          cursor: nil, sinceLastMs: sinceLastMs, detectMs: detectMs, faceMs: faceMs,
+                          processMs: (CACurrentMediaTime() - now) * 1000)
         Task { @MainActor in
             self.state.hands = hands
             self.state.face = face
@@ -368,7 +383,8 @@ final class Engine: @unchecked Sendable {
         frameTimes.append(now)
         frameTimes.removeAll { now - $0 > 1 }
         if calibrationStep(hands: hands, now: now, fps: Double(frameTimes.count)) { return }
-        if lookSamplingStep(buffer, hands: hands, fps: Double(frameTimes.count)) { return }
+        if lookSamplingStep(buffer, hands: hands, primary: primary, fps: Double(frameTimes.count), now: now,
+                            sinceLastMs: sinceLast.map { $0 * 1000 }, detectMs: detectMs) { return }
         let fps = Double(frameTimes.count)
 
         // The face feeds the log and, in look mode, the display pick. Look mode alone detects it on

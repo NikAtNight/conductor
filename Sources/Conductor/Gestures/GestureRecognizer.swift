@@ -39,6 +39,8 @@ struct GestureRecognizer {
         case scroll(dy: CGFloat)
         /// Spread change since the last frame, normalized frame units. Positive zooms in.
         case zoom(delta: CGFloat)
+        /// Move the control box to the next display.
+        case switchDisplay
     }
 
     /// State changes the UI cares about (sounds, VoiceOver, status text). Not input.
@@ -560,6 +562,7 @@ struct GestureRecognizer {
         case .scrollMode:
             enterScrollMode(heldBy: nil)
             return []
+        case .switchDisplay: return [.switchDisplay]
         case .scroll, .zoom, .none: return []
         }
     }
@@ -749,6 +752,7 @@ struct GestureRecognizer {
             enterScrollMode(heldBy: trigger)
             active = nil
             return []
+        case .switchDisplay: return [.switchDisplay]
         case .scroll, .zoom, .none: return []
         }
     }

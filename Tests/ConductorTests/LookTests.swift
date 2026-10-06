@@ -1,6 +1,8 @@
 import XCTest
 @testable import Conductor
 
+private func spread(_ mean: Double, _ sd: Double) -> LookModel.Spread { LookModel.Spread(mean: mean, sd: sd) }
+
 final class LookCalibrationTests: XCTestCase {
     let top = "top"
     let bottom = "bottom"
@@ -17,45 +19,48 @@ final class LookCalibrationTests: XCTestCase {
         }
     }
 
-    func testTwoStackedDisplaysWithDistinctAnglesCalibrate() throws {
+    func testTwoStackedDisplaysGiveMeansInsideTheSampledPitchRanges() throws {
         let all = samples(top, pitch: 3...7) + samples(bottom, pitch: 10...14)
-        let model = try LookCalibration.pass(from: all, displays: [top, bottom]).get()
-        XCTAssertEqual(model.targets.map(\.displayUUID), [top, bottom])
-        XCTAssertTrue((3.0...7.0).contains(model.targets[0].pitch.lowerBound))
-        XCTAssertTrue((10.0...14.0).contains(model.targets[1].pitch.lowerBound))
+        let pass = try LookCalibration.pass(from: all, displays: [top, bottom]).get()
+        XCTAssertEqual(pass.targets.map(\.displayUUID), [top, bottom])
+        XCTAssertTrue((3.0...7.0).contains(pass.targets[0].pitch.mean))
+        XCTAssertTrue((10.0...14.0).contains(pass.targets[1].pitch.mean))
+        // Evenly spaced and symmetric, so the trimmed mean is the middle of the range.
+        XCTAssertEqual(pass.targets[0].pitch.mean, 5, accuracy: 1e-9)
+        XCTAssertEqual(pass.targets[1].pitch.mean, 12, accuracy: 1e-9)
+        XCTAssertEqual(pass.targets[0].yaw.mean, 0, accuracy: 1e-9)
     }
 
-    func testAStrayFrameDoesNotStretchTheTargetBecauseOfPercentileTrimming() throws {
-        let outlier = LookCalibration.Sample(displayUUID: top, pitch: 40, yaw: 0, faceHeight: 0.4)
-        let all = samples(top, pitch: 3...7) + [outlier] + samples(bottom, pitch: 10...14)
-        let model = try LookCalibration.pass(from: all, displays: [top, bottom]).get()
-        let pitch = model.targets[0].pitch
-        XCTAssertGreaterThanOrEqual(pitch.lowerBound, 3)
-        XCTAssertLessThanOrEqual(pitch.upperBound, 7)
-    }
-
-    func testTargetYawCoversTheSampledAnglesLessTheTrimmedTails() throws {
+    func testSpreadIsTheStandardDeviationOfTheSamplesLeftAfterTrimming() throws {
         let all = samples(top, pitch: 3...7) + samples(bottom, pitch: 10...14)
         let yaw = try LookCalibration.pass(from: all, displays: [top, bottom]).get().targets[0].yaw
-        XCTAssertGreaterThanOrEqual(yaw.lowerBound, -10)
-        XCTAssertLessThan(yaw.lowerBound, -8)
-        XCTAssertLessThanOrEqual(yaw.upperBound, 10)
-        XCTAssertGreaterThan(yaw.upperBound, 8)
+        // 20 evenly spaced yaw values, 5% (one) dropped each side: 18 values 20/19 degrees apart.
+        let spacing = 20.0 / 19.0, n = 18.0
+        XCTAssertEqual(yaw.sd, spacing * ((n * n - 1) / 12).squareRoot(), accuracy: 1e-9)
     }
 
-    func testModelFaceHeightIsTheMedianOfAllSamples() throws {
-        // 41 samples with heights 0.30...0.49, so the middle one is 0.40.
+    func testASingleOutlierAtPitchFortyBarelyMovesTheMean() throws {
+        let outlier = LookCalibration.Sample(displayUUID: top, pitch: 40, yaw: 0, faceHeight: 0.4)
+        let all = samples(top, pitch: 3...7) + [outlier] + samples(bottom, pitch: 10...14)
+        let pitch = try LookCalibration.pass(from: all, displays: [top, bottom]).get().targets[0].pitch
+        // The outlier and the lowest sample are both trimmed, leaving a mean of about 5.1.
+        XCTAssertEqual(pitch.mean, 5, accuracy: 0.2)
+        XCTAssertLessThan(pitch.sd, 2)
+    }
+
+    func testThePassFaceHeightIsTheMedianOfAllSamples() throws {
+        // 41 samples with heights 0.30...0.50, so the middle one is 0.40.
         let all = samples(top, pitch: 3...7, count: 20, height: { 0.30 + 0.01 * Double($0) })
             + samples(bottom, pitch: 10...14, count: 21, height: { 0.30 + 0.01 * Double($0) })
-        let model = try LookCalibration.pass(from: all, displays: [top, bottom]).get()
-        XCTAssertEqual(model.faceHeight, 0.40, accuracy: 1e-9)
+        let pass = try LookCalibration.pass(from: all, displays: [top, bottom]).get()
+        XCTAssertEqual(pass.faceHeight, 0.40, accuracy: 1e-9)
     }
 
     func testTooFewSamplesForOneDisplayNamesThatDisplay() {
         let few = LookCalibration.minimumSamplesPerDisplay - 1
         let all = samples(top, pitch: 3...7) + samples(bottom, pitch: 10...14, count: few)
-        let result = LookCalibration.pass(from: all, displays: [top, bottom])
-        XCTAssertEqual(result, .failure(.tooFewSamples(displayUUID: bottom)))
+        XCTAssertEqual(LookCalibration.pass(from: all, displays: [top, bottom]),
+                       .failure(.tooFewSamples(displayUUID: bottom)))
     }
 
     func testExactlyTheMinimumSampleCountIsEnough() throws {
@@ -65,15 +70,73 @@ final class LookCalibrationTests: XCTestCase {
     }
 
     func testADisplayWithNoSamplesAtAllIsTooFew() {
-        let result = LookCalibration.pass(from: samples(top, pitch: 3...7), displays: [top, bottom])
-        XCTAssertEqual(result, .failure(.tooFewSamples(displayUUID: bottom)))
+        XCTAssertEqual(LookCalibration.pass(from: samples(top, pitch: 3...7), displays: [top, bottom]),
+                       .failure(.tooFewSamples(displayUUID: bottom)))
     }
 
-    func testDisplaysWhoseSamplesCoverTheSameAnglesAreIndistinct() {
+    func testDisplaysSampledOverTheSameAnglesAreIndistinct() {
         let all = samples(top, pitch: 3...7) + samples(bottom, pitch: 3...7)
-        let result = LookCalibration.pass(from: all, displays: [top, bottom])
-        XCTAssertEqual(result, .failure(.indistinct(top, bottom)))
+        XCTAssertEqual(LookCalibration.pass(from: all, displays: [top, bottom]), .failure(.indistinct(top, bottom)))
     }
+
+    func testAWellSeparatedPassIsClear() throws {
+        let all = samples(top, pitch: 3...7) + samples(bottom, pitch: 10...14)
+        let pass = try LookCalibration.pass(from: all, displays: [top, bottom]).get()
+        XCTAssertEqual(LookCalibration.quality(of: pass), .clear)
+    }
+
+    // MARK: quality, with the numbers measured at the desk
+
+    /// Close pass, face height 0.377. By hand: pooled pitch sd = sqrt((6.5^2 + 5.2^2) / 2) = 5.886,
+    /// pooled yaw sd = sqrt((14^2 + 9^2) / 2) = 11.769. Pitch gap 16 / 5.886 = 2.718, yaw gap
+    /// 7.8 / 11.769 = 0.663, separation sqrt(2.718^2 + 0.663^2) = 2.798.
+    private var closePass: LookModel.Pass {
+        LookModel.Pass(faceHeight: 0.377, targets: [
+            LookModel.Target(displayUUID: top, pitch: spread(-6.7, 6.5), yaw: spread(-3, 14)),
+            LookModel.Target(displayUUID: bottom, pitch: spread(9.3, 5.2), yaw: spread(4.8, 9)),
+        ])
+    }
+
+    /// Far pass, face height 0.30. Pooled pitch sd = sqrt((3.7^2 + 1.7^2) / 2) = 2.879, pooled yaw
+    /// sd = sqrt((7.8^2 + 3.6^2) / 2) = 6.075. Pitch gap 6.2 / 2.879 = 2.153, yaw gap 7.1 / 6.075 =
+    /// 1.169, separation sqrt(2.153^2 + 1.169^2) = 2.450.
+    private var farPass: LookModel.Pass {
+        LookModel.Pass(faceHeight: 0.30, targets: [
+            LookModel.Target(displayUUID: top, pitch: spread(-2.8, 3.7), yaw: spread(-3.2, 7.8)),
+            LookModel.Target(displayUUID: bottom, pitch: spread(3.4, 1.7), yaw: spread(3.9, 3.6)),
+        ])
+    }
+
+    func testTheClosePassIsClear() {
+        let separation = LookModel.weakestSeparation(closePass)
+        XCTAssertEqual(separation, 2.798, accuracy: 0.005)
+        XCTAssertGreaterThan(separation, LookCalibration.minimumSeparation)
+        XCTAssertEqual(LookCalibration.quality(of: closePass), .clear)
+    }
+
+    func testTheFarPassIsSavedButWeak() {
+        let separation = LookModel.weakestSeparation(farPass)
+        XCTAssertEqual(separation, 2.450, accuracy: 0.005)
+        XCTAssertGreaterThanOrEqual(separation, LookCalibration.minimumSeparation)
+        XCTAssertLessThan(separation, LookCalibration.clearSeparation)
+        XCTAssertEqual(LookCalibration.quality(of: farPass), .weak)
+    }
+
+    func testPooledSpreadIsTheRootMeanSquareAndNeverBelowTheMinimum() {
+        let pooled = LookModel.pooledSpread(closePass.targets)
+        XCTAssertEqual(pooled.pitch, 5.886, accuracy: 0.001)
+        XCTAssertEqual(pooled.yaw, 11.769, accuracy: 0.001)
+        let still = LookModel.pooledSpread([LookModel.Target(displayUUID: top, pitch: spread(0, 0.1), yaw: spread(0, 0.2))])
+        XCTAssertEqual(still.pitch, LookModel.minimumSpread)
+        XCTAssertEqual(still.yaw, LookModel.minimumSpread)
+    }
+
+    func testASingleDisplayHasNoWeakestSeparation() {
+        let pass = LookModel.Pass(faceHeight: 0.4, targets: [closePass.targets[0]])
+        XCTAssertEqual(LookModel.weakestSeparation(pass), .infinity)
+    }
+
+    // MARK: samples
 
     func testSampleConvertsRadiansToDegreesAndKeepsFaceHeight() throws {
         let face = FaceFixtures.face(pitchDegrees: 12, yawDegrees: -7, faceHeight: 0.35)
@@ -100,6 +163,7 @@ final class LookCalibrationTests: XCTestCase {
 final class LookPickerTests: XCTestCase {
     let top = "top"
     let bottom = "bottom"
+    let side = "side"
 
     /// Frames arrive at 30 fps; frame `n` is at n / 30 seconds.
     private let fps = 30.0
@@ -108,11 +172,14 @@ final class LookPickerTests: XCTestCase {
     /// enough at frame 1 + dwellFrames (8 frames later), and not yet at frame dwellFrames.
     private var dwellFrames: Int { Int((LookPicker.dwell * fps).rounded(.up)) }
 
-    private func model(top topPitch: ClosedRange<Double> = 3...7, bottom bottomPitch: ClosedRange<Double> = 10...14,
-                       faceHeight: Double = 0.4) -> LookModel {
-        LookModel(targets: [LookModel.Target(displayUUID: top, pitch: topPitch, yaw: -10...10),
-                            LookModel.Target(displayUUID: bottom, pitch: bottomPitch, yaw: -10...10)],
-                  faceHeight: faceHeight)
+    /// Top averages pitch 5 and bottom pitch 12, both spread 2 degrees in pitch and 3 in yaw, so
+    /// the midpoint is pitch 8.5 and a pooled spread is 2 degrees of pitch.
+    private func target(_ uuid: String, pitch: Double, yaw: Double = 0) -> LookModel.Target {
+        LookModel.Target(displayUUID: uuid, pitch: spread(pitch, 2), yaw: spread(yaw, 3))
+    }
+
+    private func model(topPitch: Double = 5, bottomPitch: Double = 12, faceHeight: Double = 0.4) -> LookModel {
+        LookModel(targets: [target(top, pitch: topPitch), target(bottom, pitch: bottomPitch)], faceHeight: faceHeight)
     }
 
     /// Feeds the same face on each frame in `frames` and returns the last pick.
@@ -138,7 +205,7 @@ final class LookPickerTests: XCTestCase {
         XCTAssertEqual(picker.current, top)
     }
 
-    func testTheFirstFaceOutsideEveryTargetPicksTheNearest() {
+    func testTheFirstFaceBeyondEveryAveragePicksTheNearest() {
         var picker = LookPicker(model: model())
         XCTAssertEqual(picker.update(FaceFixtures.face(pitchDegrees: 20), at: 0, locked: false), bottom)
     }
@@ -152,14 +219,12 @@ final class LookPickerTests: XCTestCase {
 
     func testGlancingAtTheOtherDisplayForLessThanDwellKeepsThePick() {
         var picker = pickerOnBottom()
-        let glance = FaceFixtures.face(pitchDegrees: 5)
-        XCTAssertEqual(feed(&picker, glance, frames: 1...dwellFrames), bottom)
+        XCTAssertEqual(feed(&picker, FaceFixtures.face(pitchDegrees: 5), frames: 1...dwellFrames), bottom)
     }
 
     func testLookingAtTheOtherDisplayForDwellSwitchesThePick() {
         var picker = pickerOnBottom()
-        let look = FaceFixtures.face(pitchDegrees: 5)
-        XCTAssertEqual(feed(&picker, look, frames: 1...(1 + dwellFrames)), top)
+        XCTAssertEqual(feed(&picker, FaceFixtures.face(pitchDegrees: 5), frames: 1...(1 + dwellFrames)), top)
         XCTAssertEqual(picker.current, top)
     }
 
@@ -175,25 +240,34 @@ final class LookPickerTests: XCTestCase {
 
     func testALockedInteractionBlocksTheSwitchEvenAfterDwell() {
         var picker = pickerOnBottom()
-        let look = FaceFixtures.face(pitchDegrees: 5)
         // One second of looking at top while locked, well past dwell.
-        XCTAssertEqual(feed(&picker, look, frames: 1...30, locked: true), bottom)
+        XCTAssertEqual(feed(&picker, FaceFixtures.face(pitchDegrees: 5), frames: 1...30, locked: true), bottom)
     }
 
-    func testTheSwitchHappensOnceTheLockEndsIfTheCandidateIsStillThere() {
+    func testTheSwitchHappensOnceTheLockEndsIfTheHeadIsStillThere() {
         var picker = pickerOnBottom()
         let look = FaceFixtures.face(pitchDegrees: 5)
         feed(&picker, look, frames: 1...30, locked: true)
         XCTAssertEqual(picker.update(look, at: time(31), locked: false), top)
     }
 
-    func testAFaceBetweenTheTargetsDoesNotSwitchBecauseTheAdvantageIsUnderTheMargin() {
-        // Targets cover pitch 0...5 and 7...12. At 6.3 degrees the first is 1.3 away and the second
-        // 0.7 away: closer, but by 0.6, under the 1 degree margin.
-        var picker = LookPicker(model: model(top: 0...5, bottom: 7...12))
-        XCTAssertEqual(picker.update(FaceFixtures.face(pitchDegrees: 2), at: 0, locked: false), top)
-        let between = FaceFixtures.face(pitchDegrees: 6.3)
-        XCTAssertEqual(feed(&picker, between, frames: 1...30), top)
+    func testAFaceAtTheMidpointBetweenTwoAveragesDoesNotSwitchEitherWay() {
+        // Midpoint of 5 and 12 is 8.5. The other display has to be 0.5 pooled spreads (1 degree of
+        // pitch here) closer, so 8.8 and 8.2 are inside the dead band.
+        var onTop = LookPicker(model: model())
+        _ = onTop.update(FaceFixtures.face(pitchDegrees: 5), at: 0, locked: false)
+        XCTAssertEqual(feed(&onTop, FaceFixtures.face(pitchDegrees: 8.5), frames: 1...30), top)
+        XCTAssertEqual(feed(&onTop, FaceFixtures.face(pitchDegrees: 8.8), frames: 31...60), top)
+
+        var onBottom = pickerOnBottom()
+        XCTAssertEqual(feed(&onBottom, FaceFixtures.face(pitchDegrees: 8.5), frames: 1...30), bottom)
+        XCTAssertEqual(feed(&onBottom, FaceFixtures.face(pitchDegrees: 8.2), frames: 31...60), bottom)
+    }
+
+    func testLeavingTheDeadBandTowardTheOtherDisplaySwitchesAfterDwell() {
+        var picker = LookPicker(model: model())
+        _ = picker.update(FaceFixtures.face(pitchDegrees: 5), at: 0, locked: false)
+        XCTAssertEqual(feed(&picker, FaceFixtures.face(pitchDegrees: 9.5), frames: 1...(1 + dwellFrames)), bottom)
     }
 
     func testNoFaceReturnsTheCurrentPick() {
@@ -206,7 +280,7 @@ final class LookPickerTests: XCTestCase {
         XCTAssertNil(picker.update(nil, at: 0, locked: false))
     }
 
-    func testLosingTheFaceResetsTheCandidateSoTheNextGlanceRestartsItsDwell() {
+    func testLosingTheFaceResetsTheDwellSoTheNextGlanceRestartsIt() {
         var picker = pickerOnBottom()
         let look = FaceFixtures.face(pitchDegrees: 5)
         // The glance is one frame short of dwell when the face drops out for a frame.
@@ -218,116 +292,176 @@ final class LookPickerTests: XCTestCase {
         XCTAssertEqual(picker.update(look, at: time(resume + dwellFrames), locked: false), top)
     }
 
-    func testACloserFaceScalesTheTargetsUpSoAHigherAngleStillCountsAsBottom() {
-        // Calibrated at face height 0.3, bottom display at 10...14. At 0.45 (1.5x closer) the bottom
-        // target spans about 14.8...20.5 degrees, so 16 is inside it.
+    // MARK: distance scaling
+
+    func testACloserFaceScalesTheAveragesUpSoAHigherAngleStillCountsAsBottom() {
+        // Calibrated at face height 0.3. At 0.45 (1.5x closer) the averages become about 7.5 for
+        // top and 17.7 for bottom, so pitch 16 is clearly bottom.
         var picker = LookPicker(model: model(faceHeight: 0.3))
         XCTAssertEqual(picker.update(FaceFixtures.face(pitchDegrees: 5, faceHeight: 0.3), at: 0, locked: false), top)
         let closeAndLow = FaceFixtures.face(pitchDegrees: 16, faceHeight: 0.45)
         XCTAssertEqual(feed(&picker, closeAndLow, frames: 1...(1 + dwellFrames)), bottom)
     }
 
-    func testACloserFaceAtAnAngleInsideTheRawBottomTargetReadsAsTop() {
-        // Same calibration. Pitch 11 is inside the raw bottom range, but 1.5x closer the bottom
-        // target starts near 14.8 and the top target (about 4.5...10.4) is the nearer one.
+    func testACloserFaceAtAnAngleNearTheRawBottomAverageReadsAsTop() {
+        // Same calibration. Pitch 11 is near the raw bottom average (12), but 1.5x closer the bottom
+        // average is about 17.7 and the top one about 7.5, so top is nearer.
         var picker = pickerOnBottom(model(faceHeight: 0.3), faceHeight: 0.3)
         let close = FaceFixtures.face(pitchDegrees: 11, faceHeight: 0.45)
         XCTAssertEqual(feed(&picker, close, frames: 1...(1 + dwellFrames)), top)
     }
 
-    func testScaledByRatioOneLeavesARangeUnchanged() {
-        let scaled = LookModel.scaled(10...14, by: 1)
-        XCTAssertEqual(scaled.lowerBound, 10, accuracy: 1e-9)
-        XCTAssertEqual(scaled.upperBound, 14, accuracy: 1e-9)
+    // MARK: manual override
+
+    func testAnOverrideSetsThePickAtOnce() {
+        var picker = pickerOnBottom()
+        picker.override(to: top)
+        XCTAssertEqual(picker.current, top)
     }
 
-    func testScaledScalesTheTangentOfTheAngleByTheRatio() {
-        let scaled = LookModel.scaled(10...14, by: 1.5)
-        func expected(_ degrees: Double) -> Double { atan(tan(degrees * .pi / 180) * 1.5) * 180 / .pi }
-        XCTAssertEqual(scaled.lowerBound, expected(10), accuracy: 1e-9)
-        XCTAssertEqual(scaled.upperBound, expected(14), accuracy: 1e-9)
-        XCTAssertGreaterThan(scaled.lowerBound, 10)
+    func testAnOverrideSticksWhileTheHeadKeepsPointingAtTheOldDisplay() {
+        var picker = pickerOnBottom()
+        picker.override(to: top)
+        // Two seconds with the head still on bottom, far past dwell.
+        XCTAssertEqual(feed(&picker, FaceFixtures.face(pitchDegrees: 12), frames: 1...60), top)
     }
 
-    func testScaledKeepsTheRangeOrderedWhenTheAnglesAreNegative() {
-        let scaled = LookModel.scaled(-14 ... -10, by: 1.5)
-        XCTAssertLessThan(scaled.lowerBound, scaled.upperBound)
-        XCTAssertLessThan(scaled.upperBound, -10)
+    func testAnOverrideReleasesOnceTheHeadPointsAtTheOverriddenDisplayThenSwitchesNormally() {
+        var picker = pickerOnBottom()
+        picker.override(to: top)
+        feed(&picker, FaceFixtures.face(pitchDegrees: 12), frames: 1...10)
+        // The head turns to top, which releases the hold. The pick stays top.
+        XCTAssertEqual(feed(&picker, FaceFixtures.face(pitchDegrees: 5), frames: 11...20), top)
+        // Looking back at bottom now switches after dwell, with no hold in the way.
+        let back = FaceFixtures.face(pitchDegrees: 12)
+        XCTAssertEqual(feed(&picker, back, frames: 21...(20 + dwellFrames)), top)
+        XCTAssertEqual(picker.update(back, at: time(21 + dwellFrames), locked: false), bottom)
+    }
+
+    func testAnOverrideReleasesWhenTheHeadPointsAtADifferentThirdDisplay() {
+        var picker = LookPicker(model: LookModel(targets: [target(top, pitch: 5), target(bottom, pitch: 12),
+                                                           target(side, pitch: 5, yaw: 30)], faceHeight: 0.4))
+        _ = picker.update(FaceFixtures.face(pitchDegrees: 12), at: 0, locked: false)
+        XCTAssertEqual(picker.current, bottom)
+        picker.override(to: top)
+        XCTAssertEqual(feed(&picker, FaceFixtures.face(pitchDegrees: 12), frames: 1...10), top)
+        let aside = FaceFixtures.face(pitchDegrees: 5, yawDegrees: 30)
+        XCTAssertEqual(feed(&picker, aside, frames: 11...(10 + dwellFrames)), top)
+        XCTAssertEqual(picker.update(aside, at: time(11 + dwellFrames), locked: false), side)
+    }
+
+    func testAnOverrideWaitsForTheNextFaceToLearnWhereTheHeadPoints() {
+        var picker = pickerOnBottom()
+        picker.override(to: top)
+        XCTAssertEqual(picker.update(nil, at: time(1), locked: false), top)
+        XCTAssertEqual(feed(&picker, FaceFixtures.face(pitchDegrees: 12), frames: 2...60), top)
     }
 }
 
-/// Passes per sitting distance, with the numbers from Nikhil's desk: up close the head sweeps
-/// about 20 degrees per screen, further back only a few, so the two passes look nothing alike.
+/// Passes per sitting distance, with numbers from Nikhil's desk: up close the head sweeps far
+/// more per screen than when leaning back, so the two passes look nothing alike.
 final class LookModelPassesTests: XCTestCase {
     let top = "top"
     let bottom = "bottom"
     let fps = 30.0
 
-    /// Measured at face height 0.377 (close) and 0.25 (leaning back).
+    /// Measured at face height 0.377 (close) and 0.30 (far).
     var close: LookModel.Pass {
         LookModel.Pass(faceHeight: 0.377, targets: [
-            LookModel.Target(displayUUID: top, pitch: -17.5...4.0, yaw: -26.6...20.6),
-            LookModel.Target(displayUUID: bottom, pitch: 0.7...17.8, yaw: -10.2...19.8),
+            LookModel.Target(displayUUID: top, pitch: spread(-6.7, 6.5), yaw: spread(-3, 14)),
+            LookModel.Target(displayUUID: bottom, pitch: spread(9.3, 5.2), yaw: spread(4.8, 9)),
         ])
     }
     var far: LookModel.Pass {
-        LookModel.Pass(faceHeight: 0.25, targets: [
-            LookModel.Target(displayUUID: top, pitch: 5.0...6.5, yaw: -3...3),
-            LookModel.Target(displayUUID: bottom, pitch: 7.5...9.0, yaw: -3...3),
+        LookModel.Pass(faceHeight: 0.30, targets: [
+            LookModel.Target(displayUUID: top, pitch: spread(-2.8, 3.7), yaw: spread(-3.2, 7.8)),
+            LookModel.Target(displayUUID: bottom, pitch: spread(3.4, 1.7), yaw: spread(3.9, 3.6)),
         ])
     }
 
-    func testAddingAPassAtANewDistanceKeepsBothSortedFurthestFirst() {
-        let model = LookModel(passes: [close]).adding(far)
-        XCTAssertEqual(model.passes.map(\.faceHeight), [0.25, 0.377])
+    private func target(_ uuid: String, in targets: [LookModel.Target]) throws -> LookModel.Target {
+        try XCTUnwrap(targets.first { $0.displayUUID == uuid })
     }
 
-    func testAddingAPassAtAboutTheSameDistanceReplacesTheOldOne() {
+    func testAddingAPassAtANewDistanceKeepsBothSortedFurthestFirst() {
+        XCTAssertEqual(LookModel(passes: [close]).adding(far).passes.map(\.faceHeight), [0.30, 0.377])
+        XCTAssertEqual(LookModel(passes: [far]).adding(close).passes.map(\.faceHeight), [0.30, 0.377])
+    }
+
+    func testAddingAPassWithinTheSamePlaceToleranceReplacesTheOldOne() {
         var again = close
         again.faceHeight = 0.40
+        again.targets[0].pitch = spread(-7, 6)
         let model = LookModel(passes: [far, close]).adding(again)
-        XCTAssertEqual(model.passes.map(\.faceHeight), [0.25, 0.40])
+        XCTAssertEqual(model.passes.map(\.faceHeight), [0.30, 0.40])
+        XCTAssertEqual(model.passes[1], again)
     }
 
-    func testTargetsBetweenTwoPassesAreInterpolatedByFaceHeight() throws {
+    func testTargetsHalfwayBetweenTwoPassesMixMeanAndSpreadLinearly() throws {
         let model = LookModel(passes: [far, close])
-        let halfway = (0.25 + 0.377) / 2
-        let targets = model.targets(atFaceHeight: halfway)
-        let topTarget = try XCTUnwrap(targets.first { $0.displayUUID == top })
-        XCTAssertEqual(topTarget.pitch.lowerBound, (5.0 + -17.5) / 2, accuracy: 1e-9)
-        XCTAssertEqual(topTarget.pitch.upperBound, (6.5 + 4.0) / 2, accuracy: 1e-9)
+        let halfway = try target(top, in: model.targets(atFaceHeight: (0.30 + 0.377) / 2))
+        XCTAssertEqual(halfway.pitch.mean, (-2.8 + -6.7) / 2, accuracy: 1e-9)
+        XCTAssertEqual(halfway.pitch.sd, (3.7 + 6.5) / 2, accuracy: 1e-9)
+        XCTAssertEqual(halfway.yaw.mean, (-3.2 + -3.0) / 2, accuracy: 1e-9)
+        XCTAssertEqual(halfway.yaw.sd, (7.8 + 14.0) / 2, accuracy: 1e-9)
     }
 
-    func testTargetsAtAPassesOwnDistanceAreThatPass() {
+    func testTargetsAtAPassesOwnFaceHeightAreExactlyThatPass() {
         let model = LookModel(passes: [far, close])
-        XCTAssertEqual(model.targets(atFaceHeight: 0.25), far.targets)
+        XCTAssertEqual(model.targets(atFaceHeight: 0.30), far.targets)
         XCTAssertEqual(model.targets(atFaceHeight: 0.377), close.targets)
     }
 
-    func testBeyondTheFurthestPassTheTangentRuleScalesIt() throws {
+    func testBeyondTheFurthestPassMeansAreScaledAndSpreadsScaleByTheRatio() throws {
         let model = LookModel(passes: [far, close])
-        let target = try XCTUnwrap(model.targets(atFaceHeight: 0.2).first { $0.displayUUID == bottom })
-        XCTAssertEqual(target.pitch, LookModel.scaled(7.5...9.0, by: 0.2 / 0.25))
+        let ratio = 0.2 / 0.30
+        let bottomTarget = try target(bottom, in: model.targets(atFaceHeight: 0.2))
+        XCTAssertEqual(bottomTarget.pitch.mean, LookModel.scaled(3.4, by: ratio), accuracy: 1e-9)
+        XCTAssertEqual(bottomTarget.pitch.sd, 1.7 * ratio, accuracy: 1e-9)
+        XCTAssertEqual(bottomTarget.yaw.mean, LookModel.scaled(3.9, by: ratio), accuracy: 1e-9)
+        XCTAssertEqual(bottomTarget.yaw.sd, 3.6 * ratio, accuracy: 1e-9)
     }
 
-    func testLeaningBackWithOnlyTheClosePassReadsEverythingAsBottom() {
-        // The failure that motivated passes: scaled from the close pass, the bottom screen covers
-        // pitch 0.5 to 12 degrees back there, so looking at the top screen (5.5) still reads bottom.
-        var picker = LookPicker(model: LookModel(passes: [close]))
-        _ = picker.update(FaceFixtures.face(pitchDegrees: 8.5, faceHeight: 0.25), at: 0, locked: false)
-        for frame in 1...15 {
-            _ = picker.update(FaceFixtures.face(pitchDegrees: 5.5, faceHeight: 0.25), at: Double(frame) / fps, locked: false)
-        }
-        XCTAssertEqual(picker.current, bottom)
+    func testBeyondTheNearestPassScalesTheNearestPass() throws {
+        let model = LookModel(passes: [far, close])
+        let ratio = 0.5 / 0.377
+        let topTarget = try target(top, in: model.targets(atFaceHeight: 0.5))
+        XCTAssertEqual(topTarget.pitch.mean, LookModel.scaled(-6.7, by: ratio), accuracy: 1e-9)
+        XCTAssertEqual(topTarget.pitch.sd, 6.5 * ratio, accuracy: 1e-9)
     }
 
-    func testWithAFarPassLeaningBackTellsTheScreensApart() {
-        var picker = LookPicker(model: LookModel(passes: [far, close]))
-        _ = picker.update(FaceFixtures.face(pitchDegrees: 8.5, faceHeight: 0.25), at: 0, locked: false)
-        XCTAssertEqual(picker.current, bottom)
-        for frame in 1...15 {
-            _ = picker.update(FaceFixtures.face(pitchDegrees: 5.5, faceHeight: 0.25), at: Double(frame) / fps, locked: false)
-        }
-        XCTAssertEqual(picker.current, top)
+    func testAnEmptyModelHasNoTargets() {
+        XCTAssertEqual(LookModel(passes: []).targets(atFaceHeight: 0.3), [])
+    }
+
+    func testScaledByRatioOneLeavesAnAngleUnchanged() {
+        XCTAssertEqual(LookModel.scaled(10, by: 1), 10, accuracy: 1e-9)
+    }
+
+    func testScaledScalesTheTangentOfTheAngleByTheRatio() {
+        let expected = atan(tan(10 * Double.pi / 180) * 1.5) * 180 / .pi
+        XCTAssertEqual(LookModel.scaled(10, by: 1.5), expected, accuracy: 1e-9)
+        XCTAssertGreaterThan(LookModel.scaled(10, by: 1.5), 10)
+    }
+
+    func testScaledIsSymmetricAroundZero() {
+        XCTAssertEqual(LookModel.scaled(-10, by: 1.5), -LookModel.scaled(10, by: 1.5), accuracy: 1e-9)
+        XCTAssertLessThan(LookModel.scaled(-10, by: 1.5), -10)
+        XCTAssertEqual(LookModel.scaled(0, by: 1.5), 0, accuracy: 1e-9)
+    }
+
+    // MARK: the case ranges got wrong
+
+    func testLeaningBackWithOnlyTheFarPassStillSwitchesFromBottomToTopAtPitchMinusOne() {
+        // Far pass alone. Pitch 5 is nearest bottom (0.85 spreads against 2.76 from top). Pitch -1
+        // is nearest top (0.82 against 1.66), a gap of 0.84 spreads, over the 0.5 margin. Under the
+        // old range model the two screens' ranges overlapped here and the pick stuck on bottom.
+        var picker = LookPicker(model: LookModel(passes: [far]))
+        XCTAssertEqual(picker.update(FaceFixtures.face(pitchDegrees: 5, faceHeight: 0.30), at: 0, locked: false), bottom)
+        let dwellFrames = Int((LookPicker.dwell * fps).rounded(.up))
+        let look = FaceFixtures.face(pitchDegrees: -1, faceHeight: 0.30)
+        var pick: String?
+        for frame in 1...(1 + dwellFrames) { pick = picker.update(look, at: Double(frame) / fps, locked: false) }
+        XCTAssertEqual(pick, top)
     }
 }

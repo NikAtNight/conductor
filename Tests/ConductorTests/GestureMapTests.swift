@@ -5,11 +5,13 @@ final class GestureMapTests: XCTestCase {
     typealias Action = GestureRecognizer.Action
     let dt = 1.0 / 30
 
-    func testRingPinchDoesNothingByDefault() {
+    func testRingPinchSwitchesDisplayOnceByDefault() {
+        XCTAssertEqual(GestureMap.standard[.ringPinch], .switchDisplay)
         var r = GestureRecognizer(config: .instant)
         let out = r.update(hands: [PoseFixtures.pinched(.ringTip)], at: 0)
-        XCTAssertTrue(out.actions.isEmpty)
+        XCTAssertEqual(out.actions, [.switchDisplay])
         XCTAssertEqual(out.mode, .point)
+        XCTAssertEqual(r.update(hands: [PoseFixtures.pinched(.ringTip)], at: dt).actions, [], "held, it doesn't repeat")
     }
 
     func testRingPinchMappedToScrollUsesPalmTravel() {
@@ -91,6 +93,7 @@ final class GestureMapTests: XCTestCase {
         let suite = UserDefaults(suiteName: "ConductorTests.\(UUID())")!
         var map = GestureMap.standard
         map[.ringPinch] = .shortcut(Shortcut(keyCode: 12, modifiers: CGEventFlags.maskCommand.rawValue))
+        map[.littlePinch] = .switchDisplay
         map.save(to: suite)
         XCTAssertEqual(GestureMap.load(from: suite), map)
     }
@@ -99,6 +102,29 @@ final class GestureMapTests: XCTestCase {
         var r = GestureRecognizer(config: .instant)
         XCTAssertEqual(r.update(hands: [PoseFixtures.pinched()], at: 0).label, "Thumb + index pinch: Click / drag")
         XCTAssertEqual(r.update(hands: [PoseFixtures.openHand()], at: 1).label, "Move")
+    }
+}
+
+/// Maps saved before Switch display existed have the ring pinch unbound.
+@MainActor
+final class SwitchDisplayDefaultTests: XCTestCase {
+    func testAnUnboundRingPinchGetsSwitchDisplayOnce() {
+        let suite = UserDefaults(suiteName: "SwitchDisplayDefaultTests.\(UUID())")!
+        var old = GestureMap.standard
+        old[.ringPinch] = .none
+        old.save(to: suite)
+        XCTAssertEqual(Preferences(defaults: suite).gestureMap[.ringPinch], .switchDisplay)
+        XCTAssertEqual(GestureMap.load(from: suite)[.ringPinch], .switchDisplay, "saved, not just loaded")
+        Preferences(defaults: suite).gestureMap[.ringPinch] = .none
+        XCTAssertEqual(Preferences(defaults: suite).gestureMap[.ringPinch], .none, "unbinding it again sticks")
+    }
+
+    func testABoundRingPinchIsLeftAlone() {
+        let suite = UserDefaults(suiteName: "SwitchDisplayDefaultTests.\(UUID())")!
+        var old = GestureMap.standard
+        old[.ringPinch] = .middleClick
+        old.save(to: suite)
+        XCTAssertEqual(Preferences(defaults: suite).gestureMap[.ringPinch], .middleClick)
     }
 }
 
