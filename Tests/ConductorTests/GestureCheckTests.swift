@@ -92,7 +92,7 @@ final class GestureCheckTests: XCTestCase {
         XCTAssertEqual(result.verdict, .clear)
     }
 
-    func testTheLeftHandStepWatchesTheLeftHandOrALoneHand() throws {
+    func testTheLeftHandStepWatchesTheHandTheRecognizerWould() throws {
         let fist = try step("left-fist")
         // Right fist and left open hand both in view: the left step sees the open hand.
         XCTAssertEqual(phase(fist, [PoseFixtures.fist(), left(PoseFixtures.openHand())]).hitRate, 0)
@@ -101,8 +101,9 @@ final class GestureCheckTests: XCTestCase {
         var unknown = PoseFixtures.fist()
         unknown.chirality = .unknown
         XCTAssertEqual(phase(fist, [unknown]).hitRate, 1)
-        // Two hands, neither left: not seen.
-        XCTAssertEqual(phase(fist, [PoseFixtures.fist(), unknown]).seen, 0)
+        // Two hands, neither left: the first, as the recognizer picks its main hand.
+        XCTAssertEqual(phase(fist, [PoseFixtures.fist(), unknown]).hitRate, 1)
+        XCTAssertEqual(phase(fist, [unknown, PoseFixtures.openHand()]).hitRate, 1)
     }
 
     func testAFlickReachesTheSwipeDistanceAndScrollingDoesNot() throws {
@@ -122,6 +123,16 @@ final class GestureCheckTests: XCTestCase {
         XCTAssertEqual(rest.phase.peak!, 0, accuracy: 0.001)
         XCTAssertEqual(result.verdict, .clear)
         XCTAssertEqual(result.suggestedThreshold!, 0.03, accuracy: 0.001)
+    }
+
+    func testTheFlickIsMeasuredOverTheRecognizersSwipeWindow() throws {
+        var short = config
+        short.swipeWindow = 0.05
+        let swipe = try XCTUnwrap(GestureCheck.allSteps(config: short).first { $0.id == "right-swipe" })
+        var sampler = GestureCheck.Sampler(step: swipe)
+        // 0.01 sideways a frame. A 0.05 s window spans one frame's travel; the default 0.25 would see 0.07.
+        for i in 0..<10 { sampler.add([PoseFixtures.twoFingers(at: CGPoint(x: 0.5 - 0.01 * CGFloat(i), y: 0.3))], at: Double(i) * dt) }
+        XCTAssertEqual(sampler.phase.peak!, 0.01, accuracy: 0.001)
     }
 
     func testTheFlickOnlyCountsInTheTwoFingerPose() throws {

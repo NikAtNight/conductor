@@ -290,7 +290,7 @@ private struct CheckView: View {
     }
 
     private func sign(_ step: GestureCheck.Step) -> some View {
-        let hand: GestureRecognizer.MainHand = step.hand == .left ? .left : .right
+        let hand = step.hand?.mainHand ?? .right
         if let trigger = step.trigger {
             return AnyView(HandSignView(trigger: trigger, hand: hand))
         }
