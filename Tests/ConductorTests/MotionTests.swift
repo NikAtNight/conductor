@@ -358,6 +358,15 @@ final class ScrollPolicyTests: XCTestCase {
         XCTAssertEqual(coast(), [])
     }
 
+    func testASettingsRefreshDoesNotInterruptTheLever() {
+        p.apply(gain: 1, momentum: false)
+        frame(.scroll, [.scrollLever(offset: 0.05)])
+        XCTAssertNotNil(frame(.scroll, [.scrollLever(offset: 0.05)]))
+        // Every preference edit and app switch re-applies the settings mid-gesture.
+        p.apply(gain: 1, momentum: false)
+        XCTAssertNotNil(frame(.scroll, [.scrollLever(offset: 0.05)]), "the lever's clock keeps running")
+    }
+
     func testTheLeverNeverCoasts() {
         for _ in 0..<30 { frame(.scroll, [.scrollLever(offset: 0.1)]) }
         XCTAssertEqual(coast(), [], "letting go stops the page, momentum or not")

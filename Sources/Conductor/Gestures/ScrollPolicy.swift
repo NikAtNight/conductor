@@ -38,11 +38,13 @@ struct ScrollPolicy {
     /// When the last lever reading came in. Nil after a frame without one, so the lever starts over.
     private var lastLeverTime: TimeInterval?
 
-    /// Takes new settings. Turning momentum off ends a coast in progress.
+    /// Takes new settings. Turning momentum off ends a coast in progress. Nothing else resets:
+    /// settings arrive on every refresh (a slider drag, an app switch), and the lever must not
+    /// skip a frame for that.
     mutating func apply(gain: CGFloat, momentum: Bool) {
         self.gain = gain
+        if self.momentum, !momentum { stop() }
         self.momentum = momentum
-        if !momentum { stop() }
     }
 
     /// Pixels to post this frame, or nil. `paused` is whether tracking is paused, which the output
