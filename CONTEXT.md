@@ -20,6 +20,10 @@ _Avoid_: fingertip, hand position
 Something a hand can do that Conductor detects: a pinch, a fist, the two-finger pose, both hands pinched, a swipe.
 _Avoid_: gesture (when a specific detectable thing is meant), event
 
+**Trigger reading**:
+One trigger read from one frame: the number it's decided on and whether it could start with the current thresholds. Holds, hysteresis and which trigger wins come on top, in the recognizer. The gesture check scores trigger readings.
+_Avoid_: detection (that includes the holds), recognition
+
 **Action**:
 What a trigger does when bound: click or drag, right click, scroll, zoom, a shortcut, hold a key, pause or resume, or nothing.
 _Avoid_: binding (that is the trigger-to-action pair), command

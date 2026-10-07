@@ -264,6 +264,8 @@ would sit. Nothing is applied: the report is saved as `gesture-check-<date>.json
 gesture logs, and each line is written to the gesture log if it's recording.
 
 Left and right are checked separately because Vision reports which hand it sees and the two differ.
+Each step watches the hand the recognizer would: the one being checked, or the first hand in view
+when Vision doesn't report that one.
 Readings are in hand scales, so sitting distance cancels out, but the camera angle and the light
 don't: run it again if you move the camera.
 
@@ -345,7 +347,9 @@ The gesture path is `Engine` → `FramePipeline` → `GestureRecognizer.update` 
 `PinchRobustnessTests`, `SwipeTests`, and `ScrollModeTests`: a folded thumb must not start push-to-talk
 while two fingers are forming, short horizontal flicks must swipe without vertical drift doing so,
 and last-joint evidence may sustain a cross without starting one from uncrossed visible tips.
-`GestureCheck` shares the swipe direction calculation with the recognizer.
+`TriggerReading` answers whether a trigger could start on one frame. The recognizer starts triggers
+from it and the gesture check scores it, so the check can't drift from what the recognizer does.
+The check also shares the swipe direction calculation and the main hand choice with the recognizer.
 
 Run those cases with:
 
@@ -375,8 +379,9 @@ Sources/Conductor/
                  fingers, the pointing sign), the FacePose model (head angles, eyes), the gesture
                  log and the replays of it (look calibration, hands)
   Gestures/      GestureMap, GestureRecognizer (control, pause, scroll lever and scroll mode, dwell,
-                 swipes, pointing), ControlBox, ScreenMapper, calibration, One Euro filter, pointer
-                 helpers, ScrollPolicy, LookPicker, GestureCheck (per-hand gesture report)
+                 swipes, pointing), TriggerReading (one frame's start condition per trigger),
+                 ControlBox, ScreenMapper, calibration, One Euro filter, pointer helpers,
+                 ScrollPolicy, LookPicker, GestureCheck (per-hand gesture report)
   Control/       CGEvent posting (incl. held modifier keys), Accessibility check, global hotkey
   Feedback/      Cursor ring overlay, hand map, sounds and VoiceOver announcements
   MenuBar/       Status item and menu
