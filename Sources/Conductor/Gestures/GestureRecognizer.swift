@@ -36,7 +36,11 @@ struct GestureRecognizer {
         case keyDown(Shortcut)
         case keyUp(Shortcut)
         /// Vertical palm travel since the last frame, normalized frame units. Positive is up.
-        case scroll(dy: CGFloat)
+        case scrollTravel(dy: CGFloat)
+        /// The scroll lever: knuckle height from neutral beyond the dead zone, normalized frame
+        /// units. Positive is above neutral, which scrolls down the page; 0 at rest. ScrollPolicy
+        /// sets the rate.
+        case scrollLever(offset: CGFloat)
         /// Spread change since the last frame, normalized frame units. Positive zooms in.
         case zoom(delta: CGFloat)
         /// Move the control box to the display in this direction, or with none, to the next one.
@@ -168,9 +172,6 @@ struct GestureRecognizer {
         /// from the camera both lower the knuckles in the picture, so a rock scrolls both ways only
         /// from a neutral that is already tipped forward a little.
         var scrollDeadZone: CGFloat = 0.02
-        /// Scroll speed per unit of knuckle offset past the dead zone, as frame units of travel per
-        /// second. At 4, an offset 0.05 past the dead zone scrolls 800 px/s at the default speed.
-        var scrollRate: CGFloat = 4
         /// A held scroll trigger (fist, two fingers) works as a lever too: where the knuckles were
         /// when it engaged is neutral, and holding them above or below it scrolls at a steady rate.
         /// Off, the page follows the hand's travel instead and a flick can coast.
@@ -240,7 +241,6 @@ struct GestureRecognizer {
     private var switchHeld: Trigger?
     /// The resting knuckle height scroll mode measures from. It follows the hand until `lockedAt`.
     private var neutral: (y: CGFloat, lockedAt: TimeInterval)?
-    private var lastScrollTime: TimeInterval?
     /// Consecutive frames needed to start or end the two-finger pose.
     static let poseFrames = 3
 
@@ -504,7 +504,13 @@ struct GestureRecognizer {
 
     /// For the cursor ring: 1 scrolling down the page, -1 up, 0 at rest or not scrolling.
     private static func scrollDirection(of actions: [Action]) -> Int {
-        for case .scroll(let dy) in actions where dy != 0 { return dy > 0 ? 1 : -1 }
+        for action in actions {
+            switch action {
+            case .scrollTravel(let value), .scrollLever(let value):
+                if value != 0 { return value > 0 ? 1 : -1 }
+            default: break
+            }
+        }
         return 0
     }
 
@@ -545,45 +551,38 @@ struct GestureRecognizer {
             forming = true
         }
         guard switchHeld == nil, !forming, let knuckles = primary.knuckleCenter else {
-            lastScrollTime = nil
             return output(.scrollMode, pointer: nil, actions: actions, label: "Scroll mode: let go, then rest your hand")
         }
         // The hand just uncrossed its fingers; give it a moment to settle before neutral locks.
-        guard let lever = leverTravel(knuckles: knuckles, settle: config.neutralSettle, at: time) else {
+        guard let offset = leverOffset(knuckles: knuckles, settle: config.neutralSettle, at: time) else {
             return output(.scrollMode, pointer: nil, actions: actions, label: "Scroll mode: rest your hand")
         }
-        actions.append(.scroll(dy: lever.travel))
-        let label = ["Scroll mode: scrolling up", "Scroll mode: at rest", "Scroll mode: scrolling down"][lever.direction + 1]
+        actions.append(.scrollLever(offset: offset))
+        let direction = Self.scrollDirection(of: actions)
+        let label = ["Scroll mode: scrolling up", "Scroll mode: at rest", "Scroll mode: scrolling down"][direction + 1]
         return output(.scrollMode, pointer: nil, actions: actions, label: label,
-                      feedback: Feedback(scrollDirection: lever.direction))
+                      feedback: Feedback(scrollDirection: direction))
     }
 
-    /// The lever: knuckle height from neutral, past the dead zone, becomes a scroll rate. Neutral
-    /// follows the hand for `settle` seconds after the lever starts, then locks. Nil while it's
-    /// settling. Positive travel is the hand above neutral, which ScrollPolicy turns into scrolling
-    /// down the page.
-    private mutating func leverTravel(knuckles: CGPoint, settle: TimeInterval,
-                                      at time: TimeInterval) -> (travel: CGFloat, direction: Int)? {
+    /// The lever: knuckle height from neutral, less the dead zone, signed. Neutral follows the hand
+    /// for `settle` seconds after the lever starts, then locks. Nil while it's settling. Positive is
+    /// the hand above neutral, which ScrollPolicy turns into scrolling down the page at a rate set
+    /// by the offset.
+    private mutating func leverOffset(knuckles: CGPoint, settle: TimeInterval, at time: TimeInterval) -> CGFloat? {
         if neutral == nil { neutral = (knuckles.y, time + settle) }
         if let settling = neutral, time < settling.lockedAt {
             neutral = (knuckles.y, settling.lockedAt)
-            lastScrollTime = nil
             return nil
         }
         let offset = knuckles.y - (neutral?.y ?? knuckles.y)
         let excess = max(0, abs(offset) - config.scrollDeadZone)
-        let direction = excess > 0 ? (offset > 0 ? 1 : -1) : 0
-        // Capped like ScrollPolicy, so a dropped frame can't become one giant step.
-        let dt = lastScrollTime.map { min(time - $0, 0.1) } ?? 0
-        lastScrollTime = time
-        return (CGFloat(direction) * excess * config.scrollRate * CGFloat(dt), direction)
+        return offset < 0 ? -excess : excess
     }
 
     private mutating func enterScrollMode(heldBy trigger: Trigger?) {
         inScrollMode = true
         switchHeld = trigger
         neutral = nil
-        lastScrollTime = nil
         events.append(.scrollModeOn)
     }
 
@@ -923,7 +922,6 @@ struct GestureRecognizer {
         lastSpread = spread(primary, other)
         // A scroll lever starts fresh from where this trigger engaged.
         neutral = nil
-        lastScrollTime = nil
         // Whatever comes next, the fingers have to open first.
         openedFingers.removeAll()
         switch map[trigger] {
@@ -980,13 +978,13 @@ struct GestureRecognizer {
             if config.scrollLever {
                 // Curling the fingers doesn't move the knuckles, so neutral can lock at once.
                 guard let knuckles = primary.knuckleCenter,
-                      let lever = leverTravel(knuckles: knuckles, settle: 0, at: time) else { return [] }
-                return [.scroll(dy: lever.travel)]
+                      let offset = leverOffset(knuckles: knuckles, settle: 0, at: time) else { return [] }
+                return [.scrollLever(offset: offset)]
             }
             guard let y = primary.palmCenter?.y else { return [] }
             defer { lastPalmY = y }
             guard let previous = lastPalmY else { return [] }
-            return [.scroll(dy: y - previous)]
+            return [.scrollTravel(dy: y - previous)]
         case .zoom:
             // Two hands zoom by spread. A one-handed zoom trigger uses vertical palm travel instead.
             if trigger == .twoHandPinch {

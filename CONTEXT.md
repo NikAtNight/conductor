@@ -77,7 +77,7 @@ One thing to post to macOS: a cursor move, a button, a key, a scroll, or a relea
 _Avoid_: event, CGEvent
 
 **Scroll policy**:
-The rules that turn scroll triggers into wheel pixels, keep a flick coasting, and decide what ends a coast.
+The rules that turn what a scroll trigger measured (palm travel, or the lever's offset from neutral) into wheel pixels. They set the lever's rate, keep a flick coasting, and decide what ends a coast.
 _Avoid_: momentum scroller, inertia
 
 **Scroll lever**:

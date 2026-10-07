@@ -12,10 +12,15 @@ final class SwipeTests: XCTestCase {
         XCTAssertFalse(PoseFixtures.fist().isTwoFingerPose)
     }
 
-    /// Two fingers also scroll by palm travel. These moves are level, so the deltas are all zero;
-    /// drop them to look at the swipes alone.
+    /// Two fingers also scroll. These moves are level, so the lever sits at rest; drop its readings
+    /// to look at the swipes alone.
     private func withoutScroll(_ actions: [GestureRecognizer.Action]) -> [GestureRecognizer.Action] {
-        actions.filter { if case .scroll = $0 { return false } else { return true } }
+        actions.filter {
+            switch $0 {
+            case .scrollTravel, .scrollLever: return false
+            default: return true
+            }
+        }
     }
 
     /// Moves the two-finger hand from x0 to x1 (Vision space) over `duration` and collects actions.
@@ -242,29 +247,36 @@ final class PrecisionPointerTests: XCTestCase {
 }
 
 final class ScrollPolicyTests: XCTestCase {
+    typealias Action = GestureRecognizer.Action
     let dt = 1.0 / 30
     var p = ScrollPolicy()
     var t = 0.0
 
-    /// Scroll gesture frames with this much hand travel each, then release frames until the coast
-    /// ends. Returns the pixels posted after release.
-    private func flick(travel: CGFloat, frames: Int = 4) -> [Int32] {
-        for _ in 0..<frames {
-            _ = p.pixels(travel: travel, scrolling: true, interrupted: false, at: t)
-            t += dt
-        }
-        var steps: [Int32] = []
-        for _ in 0..<120 {
-            if let px = p.pixels(travel: nil, scrolling: false, interrupted: false, at: t) { steps.append(px) }
-            t += dt
-        }
-        return steps
+    /// One frame of recognizer output.
+    @discardableResult
+    private func frame(_ mode: GestureRecognizer.Mode, _ actions: [Action] = [], paused: Bool = false,
+                       dt: TimeInterval? = nil) -> Int32? {
+        let out = GestureRecognizer.Output(mode: mode, pointer: nil, actions: actions, label: "")
+        defer { t += dt ?? self.dt }
+        return p.pixels(for: out, paused: paused, at: t)
     }
 
-    func testLiveScrollingFollowsTheHandWithNaturalDirection() {
-        XCTAssertEqual(p.pixels(travel: 0.01, scrolling: true, interrupted: false, at: 0), -40)
-        p.gain = 2
-        XCTAssertEqual(p.pixels(travel: -0.01, scrolling: true, interrupted: false, at: dt), 80)
+    /// Frames until a coast would have ended. Returns the pixels posted.
+    private func coast(_ mode: GestureRecognizer.Mode = .point) -> [Int32] {
+        (0..<120).compactMap { _ in frame(mode) }
+    }
+
+    /// A held scroll trigger moving this much each frame, then release frames until the coast
+    /// ends. Returns the pixels posted after release.
+    private func flick(travel: CGFloat, frames: Int = 4) -> [Int32] {
+        for _ in 0..<frames { frame(.scroll, [.scrollTravel(dy: travel)]) }
+        return coast()
+    }
+
+    func testLiveTravelFollowsTheHandWithNaturalDirection() {
+        XCTAssertEqual(frame(.scroll, [.scrollTravel(dy: 0.01)]), -40)
+        p.apply(gain: 2, momentum: true)
+        XCTAssertEqual(frame(.scroll, [.scrollTravel(dy: -0.01)]), 80)
     }
 
     func testAFlickCoastsAndSlowsToAStop() {
@@ -279,22 +291,117 @@ final class ScrollPolicyTests: XCTestCase {
         XCTAssertEqual(flick(travel: 0.001), [])
     }
 
-    func testAnInterruptionEndsTheCoast() {
-        for _ in 0..<4 { _ = p.pixels(travel: 0.01, scrolling: true, interrupted: false, at: t); t += dt }
-        XCTAssertNotNil(p.pixels(travel: nil, scrolling: false, interrupted: false, at: t)); t += dt
-        XCTAssertNil(p.pixels(travel: nil, scrolling: false, interrupted: true, at: t)); t += dt
-        XCTAssertNil(p.pixels(travel: nil, scrolling: false, interrupted: false, at: t))
-    }
-
     func testMomentumOffStopsWithTheHand() {
-        p.momentum = false
+        p.apply(gain: 1, momentum: false)
         XCTAssertEqual(flick(travel: 0.01), [])
     }
 
+    func testTurningMomentumOffEndsACoast() {
+        for _ in 0..<4 { frame(.scroll, [.scrollTravel(dy: 0.01)]) }
+        XCTAssertNotNil(frame(.point))
+        p.apply(gain: 1, momentum: false)
+        XCTAssertEqual(coast(), [])
+    }
+
+    func testAClickEndsTheCoast() {
+        for _ in 0..<4 { frame(.scroll, [.scrollTravel(dy: 0.01)]) }
+        XCTAssertNotNil(frame(.point), "coasting")
+        XCTAssertNil(frame(.drag, [.leftDown(clickCount: 1)]))
+        frame(.point, [.leftUp(clickCount: 1)])
+        XCTAssertEqual(coast(), [])
+    }
+
+    func testAShortcutEndsTheCoastWithoutAModeChange() {
+        let back = Shortcut(keyCode: 33, modifiers: CGEventFlags.maskCommand.rawValue)
+        for _ in 0..<4 { frame(.scroll, [.scrollTravel(dy: 0.01)]) }
+        XCTAssertNotNil(frame(.point))
+        XCTAssertNil(frame(.swipe, [.shortcut(back)]))
+        XCTAssertEqual(coast(), [])
+    }
+
+    func testHeldKeysDoNotEndTheCoast() {
+        let key = Shortcut(keyCode: 49, modifiers: 0)
+        for _ in 0..<4 { frame(.scroll, [.scrollTravel(dy: 0.01)]) }
+        XCTAssertNotNil(frame(.point))
+        XCTAssertNotNil(frame(.point, [.keyDown(key)]), "push-to-talk while the page coasts")
+    }
+
+    func testAPauseEndsTheCoast() {
+        for _ in 0..<4 { frame(.scroll, [.scrollTravel(dy: 0.01)]) }
+        XCTAssertNotNil(frame(.point))
+        XCTAssertNil(frame(.paused))
+        XCTAssertEqual(coast(.paused), [])
+    }
+
+    func testAPauseEndsTheCoastEvenOnceTheHandIsGone() {
+        for _ in 0..<4 { frame(.scroll, [.scrollTravel(dy: 0.01)]) }
+        XCTAssertNotNil(frame(.point))
+        // Paused with the hand out of view, the recognizer reports .idle.
+        XCTAssertNil(frame(.idle, paused: true))
+        XCTAssertEqual(coast(.idle), [])
+    }
+
+    func testLosingTheHandMidFlickStillCoasts() {
+        for _ in 0..<4 { frame(.scroll, [.scrollTravel(dy: 0.01)]) }
+        XCTAssertGreaterThan(coast(.idle).count, 10)
+    }
+
+    func testScrollModeNeverCoasts() {
+        for _ in 0..<30 { frame(.scrollMode, [.scrollLever(offset: 0.1)]) }
+        XCTAssertEqual(coast(), [], "leaving scroll mode stops the page at once")
+    }
+
+    func testLeavingScrollModeEndsACoast() {
+        for _ in 0..<4 { frame(.scroll, [.scrollTravel(dy: 0.01)]) }
+        XCTAssertNotNil(frame(.point))
+        // Switched in, but the hand is still settling: no lever reading yet.
+        frame(.scrollMode)
+        frame(.scrollMode)
+        XCTAssertEqual(coast(), [])
+    }
+
+    func testTheLeverNeverCoasts() {
+        for _ in 0..<30 { frame(.scroll, [.scrollLever(offset: 0.1)]) }
+        XCTAssertEqual(coast(), [], "letting go stops the page, momentum or not")
+    }
+
+    func testTheLeverScrollsAtASteadyRateWhateverTheFrameRate() {
+        // 0.05 past the dead zone at rate 4 and 4000 px per frame width: 800 px a second.
+        let expected = -0.05 * ScrollPolicy.leverRate * ScrollPolicy.pixelsPerFrame
+        for fps in [15.0, 30, 60] {
+            p = ScrollPolicy()
+            let step = 1 / fps
+            XCTAssertNil(frame(.scroll, [.scrollLever(offset: 0.05)], dt: step), "the first reading only starts the clock")
+            let pixels = (0..<Int(2 * fps)).compactMap { _ in frame(.scroll, [.scrollLever(offset: 0.05)], dt: step) }
+            XCTAssertEqual(pixels.count, Int(2 * fps), "every frame posts at \(fps) fps")
+            XCTAssertEqual(CGFloat(pixels.reduce(0, +)) / 2, expected, accuracy: abs(expected) * 0.05, "\(fps) fps")
+        }
+    }
+
+    func testTheLeverFollowsTheOffsetAndRestsAtZero() {
+        frame(.scroll, [.scrollLever(offset: 0)])
+        XCTAssertNil(frame(.scroll, [.scrollLever(offset: 0)]), "at rest posts nothing")
+        let near = frame(.scroll, [.scrollLever(offset: -0.02)]) ?? 0
+        let far = frame(.scroll, [.scrollLever(offset: -0.06)]) ?? 0
+        XCTAssertGreaterThan(near, 0, "below neutral scrolls up the page: positive wheel")
+        XCTAssertGreaterThan(far, near * 2)
+    }
+
+    func testALeverGapDoesNotBecomeOneGiantStep() {
+        frame(.scroll, [.scrollLever(offset: 0.05)])
+        frame(.scroll, [.scrollLever(offset: 0.05)], dt: 2)
+        let afterStall = frame(.scroll, [.scrollLever(offset: 0.05)])
+        // 0.1 s at most: 80 px.
+        XCTAssertLessThanOrEqual(abs(afterStall ?? 0), 80)
+        // A frame without a reading (the hand dropped out) starts the lever over.
+        frame(.scroll)
+        XCTAssertNil(frame(.scroll, [.scrollLever(offset: 0.05)], dt: 1))
+    }
+
     func testAStallDoesNotBecomeOneGiantStep() {
-        for _ in 0..<4 { _ = p.pixels(travel: 0.01, scrolling: true, interrupted: false, at: t); t += dt }
-        _ = p.pixels(travel: nil, scrolling: false, interrupted: false, at: t)
-        let afterStall = p.pixels(travel: nil, scrolling: false, interrupted: false, at: t + 2)
+        for _ in 0..<4 { frame(.scroll, [.scrollTravel(dy: 0.01)]) }
+        frame(.point, dt: 2)
+        let afterStall = frame(.point)
         XCTAssertLessThanOrEqual(abs(afterStall ?? 0), 40 * 3)
     }
 }

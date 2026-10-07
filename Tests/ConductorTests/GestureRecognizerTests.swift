@@ -108,7 +108,7 @@ final class GestureRecognizerTests: XCTestCase {
         let out = r.update(hands: [PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.34))], at: dt)
         XCTAssertEqual(out.mode, .scroll)
         XCTAssertEqual(out.actions.count, 1)
-        if case .scroll(let dy) = out.actions[0] {
+        if case .scrollTravel(let dy) = out.actions[0] {
             XCTAssertEqual(dy, 0.04, accuracy: 1e-9)
         } else {
             XCTFail("expected scroll, got \(out.actions)")

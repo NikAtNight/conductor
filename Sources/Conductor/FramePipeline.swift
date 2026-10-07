@@ -55,7 +55,6 @@ struct FramePipeline {
     private var cameraMount: (x: CGFloat, display: CGRect) = (0, .zero)
     private var inputAllowed = false
     private var wasIdle = true
-    private var wasScrollMode = false
     private var lastPosted = CGPoint(x: -1, y: -1)
     private var relativeCursor: CGPoint = .zero
     private var zoomAccumulator: CGFloat = 0
@@ -111,10 +110,7 @@ struct FramePipeline {
         relative.speed = CGFloat(snapshot.trackpadSpeed)
         relative.mirrored = snapshot.mirrored
         precision.slowGain = CGFloat(snapshot.slowMoveSpeed)
-        scroll.gain = CGFloat(snapshot.scrollGain)
-        // A lever has no flick to coast from: letting go stops the page.
-        scroll.momentum = snapshot.momentumScroll && snapshot.scrollStyle == .travel
-        if !scroll.momentum { scroll.stop() }
+        scroll.apply(gain: CGFloat(snapshot.scrollGain), momentum: snapshot.momentumScroll)
         return commands
     }
 
@@ -144,7 +140,6 @@ struct FramePipeline {
         relative.reset()
         precision.reset()
         wasIdle = true
-        wasScrollMode = false
         lastPosted = CGPoint(x: -1, y: -1)
     }
 
@@ -208,20 +203,9 @@ struct FramePipeline {
             scroll.stop()
             return Output(recognized: recognized, cursor: cursor, commands: commands)
         }
-        var travel: CGFloat?
-        for action in recognized.actions {
-            if case .scroll(let dy) = action { travel = (travel ?? 0) + dy }
-            commands += self.commands(for: action)
-        }
-        // Momentum: a scroll that ends mid-flick keeps going and slows down. A click, a new gesture,
-        // or a pause stops it. Scroll mode never coasts: the page stops when it ends, hand or not.
-        let inScrollMode = recognized.mode == .scrollMode
-        defer { wasScrollMode = inScrollMode }
-        let interrupted = recognized.actions.contains(where: \.interruptsScrolling)
-            || recognized.mode == .drag || recognized.mode == .zoom || recognized.mode == .paused || recognizer.isPaused
-            || (wasScrollMode && !inScrollMode)
-        let scrolling = recognized.mode == .scroll || inScrollMode
-        if let dy = scroll.pixels(travel: travel, scrolling: scrolling, interrupted: interrupted, at: time) {
+        for action in recognized.actions { commands += self.commands(for: action) }
+        // The recognizer reports .idle while paused once the hand is gone, so the pause goes in too.
+        if let dy = scroll.pixels(for: recognized, paused: recognizer.isPaused, at: time) {
             commands.append(.scroll(dy: dy, flags: []))
         }
         return Output(recognized: recognized, cursor: cursor, commands: commands)
@@ -236,7 +220,7 @@ struct FramePipeline {
         case .shortcut(let s): return [.keyPress(CGKeyCode(s.keyCode), flags: s.flags)]
         case .keyDown(let s): return [.keyDown(s)]
         case .keyUp(let s): return [.keyUp(s)]
-        case .scroll: return [] // ScrollPolicy turns travel into pixels
+        case .scrollTravel, .scrollLever: return [] // ScrollPolicy turns these into pixels
         case .switchDisplay: return [] // step moves the target; nothing to post
         case .zoom(let delta):
             guard prefs.zoomWithKeys else {
@@ -352,16 +336,6 @@ struct FramePipeline {
         case .lookedAt:
             // The LookPicker moves the target as the head turns; until it has seen a face, stay.
             return displays.contains(current) ? current : displays[0]
-        }
-    }
-}
-
-extension GestureRecognizer.Action {
-    /// Whether this action ends a coasting scroll.
-    var interruptsScrolling: Bool {
-        switch self {
-        case .leftDown, .rightClick, .middleClick, .shortcut, .zoom, .switchDisplay: return true
-        case .leftUp, .keyDown, .keyUp, .scroll: return false
         }
     }
 }
