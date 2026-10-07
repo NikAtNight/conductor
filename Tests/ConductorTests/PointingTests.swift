@@ -87,7 +87,7 @@ final class TwoFingerScrollTests: XCTestCase {
 
     private var actions: [Action] { outputs.flatMap(\.actions) }
     private var scrolls: [CGFloat] {
-        actions.compactMap { if case .scroll(let dy) = $0 { return dy } else { return nil } }
+        actions.compactMap { if case .scrollTravel(let dy) = $0 { return dy } else { return nil } }
     }
 
     /// Two fingers up, hand moving from y0 to y1 over `frames`.

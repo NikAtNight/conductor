@@ -99,9 +99,13 @@ final class FramePipelineTests: XCTestCase {
     func testAGesturePauseStopsCoasting() {
         var map = GestureMap.standard
         map[.littlePinch] = .pauseTracking
-        pipeline = makePipeline(map: map)
+        // The travel style, since only it coasts.
+        pipeline = makePipeline(map: map) { $0.scrollStyle = .travel }
+        frame([PoseFixtures.openHand()])
         for i in 0..<6 { frame([PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.3 + 0.02 * CGFloat(i)))]) }
+        commands = []
         frame([PoseFixtures.openHand(at: CGPoint(x: 0.5, y: 0.4))]) // fingers must open after the fist
+        XCTAssertFalse(scrolls.isEmpty, "coasting before the pause")
         frame([PoseFixtures.pinched(.littleTip, at: CGPoint(x: 0.5, y: 0.4))], count: 3)
         XCTAssertEqual(last?.recognized.mode, .paused)
         commands = []

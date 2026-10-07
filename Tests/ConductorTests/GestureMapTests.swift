@@ -88,7 +88,7 @@ final class GestureMapTests: XCTestCase {
         let out = r.update(hands: [PoseFixtures.pinched(.ringTip, at: CGPoint(x: 0.5, y: 0.35))], at: dt)
         XCTAssertEqual(out.mode, .scroll)
         XCTAssertNil(out.pointer, "cursor holds still while scrolling")
-        guard case .scroll(let dy) = out.actions.first else { return XCTFail("\(out.actions)") }
+        guard case .scrollTravel(let dy) = out.actions.first else { return XCTFail("\(out.actions)") }
         XCTAssertEqual(dy, 0.05, accuracy: 1e-9)
     }
 
