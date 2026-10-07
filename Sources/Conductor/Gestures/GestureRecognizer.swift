@@ -312,9 +312,7 @@ struct GestureRecognizer {
         trackPointing(primary, at: time)
         trackTwoFingerPose(primary)
 
-        let other = hands.count >= 2
-            ? (hands.first { $0 != primary && $0.chirality != primary.chirality } ?? hands.first { $0 != primary })
-            : nil
+        let other = Self.otherHand(hands, primary: primary)
 
         if isPaused {
             return pausedUpdate(primary: primary, other: other, at: time)
@@ -712,7 +710,8 @@ struct GestureRecognizer {
     private func pinchFeedback(_ hand: HandPose) -> CGFloat {
         if let active, active.fingertip != nil, map[active].shape != .motion { return 1 }
         let distances = Trigger.pinches
-            .filter { map[$0] != .none && map[$0].shape != .motion && pinchCanStart(hand, $0.fingertip!) }
+            .filter { map[$0] != .none && map[$0].shape != .motion
+                && TriggerReading.pinchFingerClear(hand, $0.fingertip!, config: config) }
             .map { pinchDistance(hand, $0.fingertip!) }
         guard let nearest = distances.min(), config.pinchRelease > config.pinchEngage else { return 0 }
         return ((config.pinchRelease - nearest) / (config.pinchRelease - config.pinchEngage)).clamped(to: 0...1)
@@ -720,15 +719,19 @@ struct GestureRecognizer {
 
     // MARK: Trigger detection
 
+    /// Starting a trigger is TriggerReading's call. Holding one is decided here, with the release
+    /// thresholds and the state the recognizer keeps.
     private func isEngaged(_ trigger: Trigger, primary: HandPose, other: HandPose?, holding: Bool) -> Bool {
-        let threshold = holding ? config.pinchRelease : config.pinchEngage
+        let canStart = { TriggerReading.of(trigger, primary: primary, other: other, config: self.config).canStart }
         switch trigger {
         case .fist:
-            return primary.isFist
+            // The same shape starts and holds it.
+            return canStart()
         case .twoHandPinch:
+            guard holding else { return canStart() }
             guard let other else { return false }
-            let bothUnder = holding ? config.twoHandPinchRelease : config.twoHandPinchEngage
-            return pinchDistance(primary, .indexTip) < bothUnder && pinchDistance(other, .indexTip) < bothUnder
+            return pinchDistance(primary, .indexTip) < config.twoHandPinchRelease
+                && pinchDistance(other, .indexTip) < config.twoHandPinchRelease
         case .swipeLeft, .swipeRight:
             // Swipes are momentary; they can't be "held" and can't resume a pause.
             return false
@@ -742,15 +745,14 @@ struct GestureRecognizer {
             return holding ? primary.isPointingSign : pointingSince != nil
         case .indexPinch, .middlePinch, .ringPinch, .littlePinch:
             // Only starting a pinch needs a clear view of the finger. A held one stays held.
-            if pinchDistance(primary, trigger.fingertip!) < threshold {
-                return holding || pinchCanStart(primary, trigger.fingertip!)
-            }
+            guard holding else { return canStart() }
+            if pinchDistance(primary, trigger.fingertip!) < config.pinchRelease { return true }
             // Vision swaps neighbouring fingertips on a hand with the thumb across it, which made
             // the ring distance jump open for a frame while the little finger read as pinched. A
             // held middle, ring or little pinch stays held while a neighbouring tip is still at the
             // thumb. Not the index: a click must release the moment the index opens.
-            return holding && trigger != .indexPinch && neighbourFrames <= config.neighbourSwapFrames
-                && Self.neighbours[trigger, default: []].contains { pinchDistance(primary, $0.fingertip!) < threshold }
+            return trigger != .indexPinch && neighbourFrames <= config.neighbourSwapFrames
+                && Self.neighbours[trigger, default: []].contains { pinchDistance(primary, $0.fingertip!) < config.pinchRelease }
         }
     }
 
@@ -800,9 +802,11 @@ struct GestureRecognizer {
         // start a ring pinch first, which then blocks scrolling for the rest of the hold.
         if (hand.isTwoFingerPose || twoFingersHeld), twoFingerBound { return nil }
         let closed = Trigger.pinches
-            .filter { map[$0] != .none && openedFingers.contains($0.fingertip!) && pinchCanStart(hand, $0.fingertip!) }
-            .map { ($0, pinchDistance(hand, $0.fingertip!)) }
-            .filter { $0.1 < config.pinchEngage }
+            .filter { map[$0] != .none && openedFingers.contains($0.fingertip!) }
+            .compactMap { pinch -> (Trigger, CGFloat)? in
+                let reading = TriggerReading.of(pinch, primary: hand, other: nil, config: config)
+                return reading.canStart ? reading.value.map { (pinch, $0) } : nil
+            }
             .sorted { $0.1 < $1.1 }
         guard let nearest = closed.first else { return nil }
         if nearest.0 == .indexPinch { return .indexPinch }
@@ -827,10 +831,12 @@ struct GestureRecognizer {
     /// Whether index and middle are crossed, and since when. Runs every frame with a hand, like
     /// trackPinch.
     private mutating func trackCrossed(_ hand: HandPose, at time: TimeInterval) {
-        let threshold = crossed ? config.crossRelease : config.crossEngage
         let sinceLast = lastCrossTime.map { time - $0 } ?? 0
         lastCrossTime = time
-        if (hand.fingerCross(holding: crossed) ?? -.infinity) > threshold {
+        let reads = crossed
+            ? (hand.fingerCross(holding: true) ?? -.infinity) > config.crossRelease
+            : TriggerReading.of(.crossedFingers, primary: hand, other: nil, config: config).canStart
+        if reads {
             crossed = true
             uncrossedFrames = 0
         } else if crossed {
@@ -863,16 +869,9 @@ struct GestureRecognizer {
         if pointingSince == nil { pointingSince = time }
     }
 
-    /// Which way the index finger points in the pointing sign, as the user sees it. Nil outside
-    /// the sign, and nil when the finger looks too short to read, which is a finger aimed at the
-    /// lens. The larger axis wins, so a slightly tilted finger still reads as up or down.
+    /// Which way the index finger points in the pointing sign, or nil when the sign can't start.
     private func pointDirection(_ hand: HandPose) -> Direction? {
-        guard hand.isPointingSign, let v = hand.indexVector,
-              (hand.visibleLength(of: .indexTip) ?? 0) >= config.minimumFingerLength else { return nil }
-        // Vision x grows to the camera's right. With mirroring that is the user's left.
-        let dx = v.dx * (config.mirrored ? -1 : 1)
-        if abs(v.dy) >= abs(dx) { return v.dy > 0 ? .up : .down }
-        return dx > 0 ? .right : .left
+        TriggerReading.of(.indexPoint, primary: hand, other: nil, config: config).direction
     }
 
     /// Crossed fingers that mean something. Crossed fingers also have index and middle up and the
@@ -909,14 +908,6 @@ struct GestureRecognizer {
 
     private func pinchDistance(_ hand: HandPose, _ fingertip: HandJoint) -> CGFloat {
         hand.normalizedDistance(.thumbTip, fingertip) ?? .infinity
-    }
-
-    /// False when the finger points at the camera, where its tip can cover the thumb in the
-    /// picture without touching it. Also false for a middle, ring or little pinch while those three
-    /// are curled into the palm: pointing rests the thumb on them anyway.
-    private func pinchCanStart(_ hand: HandPose, _ fingertip: HandJoint) -> Bool {
-        (fingertip == .indexTip || !hand.othersCurled)
-            && (hand.visibleLength(of: fingertip) ?? 0) >= config.minimumFingerLength
     }
 
     // MARK: Activation
@@ -1084,5 +1075,11 @@ struct GestureRecognizer {
         case .left: return hands.first { $0.chirality == .left } ?? hands.first
         case .either: return hands.first
         }
+    }
+
+    /// The second hand, for the two-hand pinch: one Vision says is the other hand if there is one.
+    static func otherHand(_ hands: [HandPose], primary: HandPose) -> HandPose? {
+        guard hands.count >= 2 else { return nil }
+        return hands.first { $0 != primary && $0.chirality != primary.chirality } ?? hands.first { $0 != primary }
     }
 }

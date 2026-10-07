@@ -4,12 +4,14 @@ import Foundation
 /// Walks every trigger one hand at a time, measures the number each one is decided on while the
 /// user makes the sign and again while they rest, and scores how cleanly the current threshold
 /// separates the two. A report, not a calibration: nothing here changes a setting. The numbers
-/// are the ones the gesture log records, so a check can be read back against it.
+/// are the ones the gesture log records, so a check can be read back against it. Each frame is
+/// read with TriggerReading, the recognizer's own start conditions, on the hand it would watch.
 enum GestureCheck {
     enum Hand: String, Codable, CaseIterable {
         case right, left
 
-        var chirality: Chirality { self == .right ? .right : .left }
+        /// The recognizer's main hand setting that watches this hand.
+        var mainHand: GestureRecognizer.MainHand { self == .right ? .right : .left }
         var title: String { self == .right ? "Right hand" : "Left hand" }
     }
 
@@ -28,15 +30,34 @@ enum GestureCheck {
         var id: String
         /// Nil for the both-hands step.
         var hand: Hand?
+        /// What the step reads (see TriggerReading). Nil for the ready pose.
         var trigger: Trigger?
         var title: String
         var make: String
         var rest: String
         var measure: Measure
-        /// The number the recognizer decides with, or nil when it can't be read this frame.
-        var value: ([HandPose]) -> Double?
-        /// Whether the sign's own shape test passes, with the current thresholds.
-        var recognized: ([HandPose]) -> Bool
+        /// The settings the recognizer runs with, so the check reads with its thresholds.
+        var config: GestureRecognizer.Config
+
+        /// This frame's reading and the hand it was read from, or nil when the hand the step watches
+        /// (both hands, for the both-hands step) isn't in view. Hands are picked the way the
+        /// recognizer picks them.
+        func reading(_ hands: [HandPose]) -> (hand: HandPose, reading: TriggerReading)? {
+            guard let primary = GestureRecognizer.primaryHand(hands, prefer: hand?.mainHand ?? config.mainHand) else {
+                return nil
+            }
+            let other = GestureRecognizer.otherHand(hands, primary: primary)
+            if hand == nil, other == nil { return nil }
+            switch trigger {
+            case nil:
+                return (primary, .readyPose(primary))
+            case .swipeLeft?, .swipeRight?:
+                // A flick is made in the two-finger pose. Its travel is measured over time by the Sampler.
+                return (primary, .of(.twoFingers, primary: primary, other: other, config: config))
+            case let trigger?:
+                return (primary, .of(trigger, primary: primary, other: other, config: config))
+            }
+        }
     }
 
     /// Frames are ignored this long after an instruction changes, while the hand gets there.
@@ -45,8 +66,6 @@ enum GestureCheck {
     static let restSeconds: TimeInterval = 2.0
     /// Fewer frames with the hand in view than this and a phase can't be scored.
     static let minimumFrames = 15
-    /// The swipe's trailing window, the same one the recognizer measures a flick over.
-    static let flickWindow: TimeInterval = GestureRecognizer.Config().swipeWindow
 
     // MARK: Steps
 
@@ -56,92 +75,54 @@ enum GestureCheck {
 
     /// Every one-handed trigger plus the ready pose, in the order they are shown.
     static func steps(for hand: Hand, config: GestureRecognizer.Config) -> [Step] {
-        let only: ([HandPose]) -> HandPose? = { the(hand, in: $0) }
         var steps: [Step] = []
         steps.append(Step(
             id: "\(hand.rawValue)-readyPose", hand: hand, trigger: nil, title: "Open hand (ready pose)",
             make: "Hold your hand flat and open, fingers apart, thumb out.",
             rest: "Let the hand go loose: fingers relaxed, thumb resting against the hand.",
-            measure: .value(threshold: HandPose.openHandThumbOut, lowerIsMade: false),
-            value: { only($0)?.normalizedDistance(.thumbTip, .indexMCP).map(Double.init) },
-            recognized: { only($0)?.isOpenHand ?? false }))
+            measure: .value(threshold: HandPose.openHandThumbOut, lowerIsMade: false), config: config))
         for trigger in Trigger.pinches {
-            let tip = trigger.fingertip!
             let finger = ["index", "middle", "ring", "little"][Trigger.pinches.firstIndex(of: trigger)!]
             steps.append(Step(
                 id: "\(hand.rawValue)-\(trigger.rawValue)", hand: hand, trigger: trigger, title: trigger.title,
                 make: "Touch your thumb to your \(finger) fingertip and hold it there.",
                 rest: "Open the hand, fingers relaxed.",
-                measure: .value(threshold: config.pinchEngage, lowerIsMade: true),
-                value: { only($0)?.normalizedDistance(.thumbTip, tip).map(Double.init) },
-                recognized: { hands in
-                    guard let hand = only(hands), let distance = hand.normalizedDistance(.thumbTip, tip) else { return false }
-                    // The recognizer's own start conditions: close enough, and the finger seen from the side.
-                    return distance < config.pinchEngage && (tip == .indexTip || !hand.othersCurled)
-                        && (hand.visibleLength(of: tip) ?? 0) >= config.minimumFingerLength
-                }))
+                measure: .value(threshold: config.pinchEngage, lowerIsMade: true), config: config))
         }
         steps.append(Step(
             id: "\(hand.rawValue)-fist", hand: hand, trigger: .fist, title: Trigger.fist.title,
             make: "Close your hand into a fist.",
             rest: "Relax the hand, fingers loosely open.",
-            measure: .predicate,
-            value: { _ in nil },
-            recognized: { only($0)?.isFist ?? false }))
+            measure: .predicate, config: config))
         steps.append(Step(
             id: "\(hand.rawValue)-twoFingers", hand: hand, trigger: .twoFingers, title: Trigger.twoFingers.title,
             make: "Index and middle up, ring and little curled.",
             rest: "Relax the hand, fingers loosely open.",
-            measure: .predicate,
-            value: { _ in nil },
-            recognized: { only($0)?.isTwoFingerPose ?? false }))
+            measure: .predicate, config: config))
         steps.append(Step(
             id: "\(hand.rawValue)-crossedFingers", hand: hand, trigger: .crossedFingers, title: Trigger.crossedFingers.title,
             make: "Cross your index and middle fingers, either finger on top, palm toward the camera.",
             rest: "Index and middle up, side by side, not crossed.",
-            measure: .value(threshold: Double(config.crossEngage), lowerIsMade: false),
-            value: { only($0)?.fingerCross.map(Double.init) },
-            recognized: { (only($0)?.fingerCross ?? -.infinity) > config.crossEngage }))
+            measure: .value(threshold: Double(config.crossEngage), lowerIsMade: false), config: config))
         steps.append(Step(
             id: "\(hand.rawValue)-swipe", hand: hand, trigger: .swipeLeft, title: "Two-finger swipe",
             make: "In the two-finger pose, flick your hand sideways. A few times is fine.",
             rest: "In the two-finger pose, move slowly up and down, as if scrolling.",
-            measure: .peak(threshold: Double(config.swipeDistance)),
-            value: { _ in nil }, // the sampler measures travel over time; see Sampler
-            recognized: { only($0)?.isTwoFingerPose ?? false }))
+            measure: .peak(threshold: Double(config.swipeDistance)), config: config))
         steps.append(Step(
             id: "\(hand.rawValue)-indexPoint", hand: hand, trigger: .indexPoint, title: Trigger.indexPoint.title,
             make: "Point your index finger up, thumb out, the other fingers curled.",
             rest: "Point with your index finger, thumb resting on the curled fingers.",
-            measure: .value(threshold: HandPose.pointingThumbOut, lowerIsMade: false),
-            value: { only($0)?.normalizedDistance(.thumbTip, .indexMCP).map(Double.init) },
-            recognized: { hands in
-                guard let hand = only(hands), hand.isPointingSign else { return false }
-                return (hand.visibleLength(of: .indexTip) ?? 0) >= config.minimumFingerLength
-            }))
+            measure: .value(threshold: HandPose.pointingThumbOut, lowerIsMade: false), config: config))
         return steps
     }
 
     static func bothHands(config: GestureRecognizer.Config) -> Step {
-        let widest: ([HandPose]) -> Double? = { hands in
-            guard hands.count >= 2 else { return nil }
-            let distances = hands.prefix(2).compactMap { $0.normalizedDistance(.thumbTip, .indexTip) }
-            guard distances.count == 2 else { return nil }
-            return Double(distances.max()!)
-        }
-        return Step(
+        Step(
             id: "both-twoHandPinch", hand: nil, trigger: .twoHandPinch, title: Trigger.twoHandPinch.title,
             make: "Pinch thumb and index on both hands, with the other fingers open.",
             rest: "Both hands up, open and relaxed.",
-            measure: .value(threshold: Double(config.twoHandPinchEngage), lowerIsMade: true),
-            value: widest,
-            recognized: { (widest($0) ?? .infinity) < Double(config.twoHandPinchEngage) })
-    }
-
-    /// The hand a one-handed step watches: the one Vision says is that hand, or the only hand in
-    /// view when Vision can't tell, the way the recognizer picks its main hand.
-    static func the(_ hand: Hand, in hands: [HandPose]) -> HandPose? {
-        hands.first { $0.chirality == hand.chirality } ?? (hands.count == 1 ? hands[0] : nil)
+            measure: .value(threshold: Double(config.twoHandPinchEngage), lowerIsMade: true), config: config)
     }
 
     // MARK: Sampling
@@ -163,34 +144,32 @@ enum GestureCheck {
 
         mutating func add(_ hands: [HandPose], at time: TimeInterval) {
             frames += 1
-            let present = step.hand.map { GestureCheck.the($0, in: hands) != nil } ?? (hands.count >= 2)
-            guard present else {
+            guard let (hand, reading) = step.reading(hands) else {
                 latest = nil
                 return
             }
             seen += 1
-            let hit = step.recognized(hands)
+            let hit = reading.canStart
             if hit { recognized += 1 }
             let value: Double?
             if case .peak = step.measure {
-                value = flick(hands, at: time)
+                value = flick(hand, posed: hit, at: time)
             } else {
-                value = step.value(hands)
+                value = reading.value.map(Double.init)
             }
             if let value { values.append(value) }
             latest = (value, hit)
         }
 
-        /// Sideways knuckle travel over the trailing window while in the two-finger pose, the number
-        /// the recognizer compares with its swipe distance.
-        private mutating func flick(_ hands: [HandPose], at time: TimeInterval) -> Double? {
-            guard let hand = step.hand, let pose = GestureCheck.the(hand, in: hands),
-                  pose.isTwoFingerPose, let point = pose.knuckleCenter else {
+        /// Sideways knuckle travel over the recognizer's swipe window while in the two-finger pose,
+        /// the number it compares with its swipe distance.
+        private mutating func flick(_ hand: HandPose, posed: Bool, at time: TimeInterval) -> Double? {
+            guard posed, let point = hand.knuckleCenter else {
                 trail.removeAll()
                 return nil
             }
             trail.append((time, point))
-            trail.removeAll { time - $0.time > GestureCheck.flickWindow }
+            trail.removeAll { time - $0.time > step.config.swipeWindow }
             guard let first = trail.first else { return nil }
             return Double(abs(GestureRecognizer.swipeTravel(from: first.point, to: point)))
         }
