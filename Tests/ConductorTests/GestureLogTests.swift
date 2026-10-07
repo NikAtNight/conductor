@@ -90,6 +90,32 @@ final class GestureLogTests: XCTestCase {
         XCTAssertNil(frame["setup"])
     }
 
+    func testPruneKeepsAWeekAndTheNewestGigabyteAndNeverTheActiveLog() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "GestureLogTests.\(UUID())")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let now = Date()
+        func file(_ name: String, bytes: Int, age: TimeInterval) throws -> URL {
+            let url = dir.appending(path: name)
+            try Data(repeating: 0x20, count: bytes).write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-age)], ofItemAtPath: url.path)
+            return url
+        }
+        _ = try file("gestures-2026-09-20-120000.jsonl", bytes: 100, age: 10 * 86400)
+        _ = try file("gesture-check-2026-10-01-120000.json", bytes: 100, age: 3 * 86400)
+        _ = try file("gestures-2026-10-06-120000.jsonl", bytes: 600, age: 3600)
+        _ = try file("gestures-2026-10-06-130000.jsonl", bytes: 600, age: 60)
+        let active = try file("gestures-2026-10-06-140000.jsonl", bytes: 5000, age: 0)
+        _ = try file("notes.txt", bytes: 9000, age: 30 * 86400)
+
+        let deleted = GestureLog.prune(directory: dir, keepBytes: 1000, keepDays: 7, excluding: active, now: now)
+        // Newest first: 130000 (600) fits, 120000 pushes past 1000, the report is young enough but
+        // over the cap, and the September log is past its week. The active log and the stray file stay.
+        XCTAssertEqual(deleted, ["gestures-2026-10-06-120000.jsonl", "gesture-check-2026-10-01-120000.json", "gestures-2026-09-20-120000.jsonl"])
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: dir.path)),
+                       ["gestures-2026-10-06-130000.jsonl", "gestures-2026-10-06-140000.jsonl", "notes.txt"])
+    }
+
     func testTheFaceIsLoggedInDegreesWithEachEyesGaze() throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: "GestureLogTests.\(UUID())")
         defer { try? FileManager.default.removeItem(at: dir) }

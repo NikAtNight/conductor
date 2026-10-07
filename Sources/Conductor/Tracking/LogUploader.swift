@@ -89,7 +89,8 @@ final class LogUploader: @unchecked Sendable {
     }
 
     /// Sends every log and report in the folder that the server hasn't accepted yet, oldest
-    /// first, skipping `active` (the log still being written). Returns at once; the work queues.
+    /// first, skipping `active` (the log still being written), then prunes the folder (see
+    /// GestureLog.prune). Returns at once; the work queues.
     func sweep(excluding active: URL? = nil) {
         queue.async { [self] in
             let files = ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
@@ -114,6 +115,7 @@ final class LogUploader: @unchecked Sendable {
                     NSLog("Conductor: upload of \(name) failed: \(reason)")
                 }
             }
+            GestureLog.prune(directory: directory, excluding: active)
         }
     }
 

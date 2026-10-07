@@ -113,7 +113,7 @@ The small always-on-top picture of the control box and the pointer, for finding 
 _Avoid_: overlay, HUD
 
 **Gesture log**:
-The opt-in per-frame record of hand poses, measurements, and what the pipeline did, for tuning.
+The per-frame record of hand poses, measurements, and what the pipeline did, kept for every tracking session and sent to the developer, for tuning.
 _Avoid_: telemetry, analytics
 
 **Recording**:

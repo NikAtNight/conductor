@@ -318,21 +318,23 @@ don't: run it again if you move the camera.
 
 ## Gesture log
 
-Menu bar > Record Gesture Log writes every camera frame to a new file in
-`~/Library/Logs/Conductor/` (Show Gesture Logs opens the folder). Each line is one JSON object: a
+Every tracking session writes every camera frame to a new file in `~/Library/Logs/Conductor/`
+(Settings > Data > Show Logs opens the folder), split into a new file each hour. Each line is one JSON object: a
 timestamp, every hand joint Vision found with its confidence, the measurements the recognizer
 decides with (pinch distances, index lift and visible length, finger cross, fist and pointing checks), the mode,
 any actions fired, where the cursor went, and frame timing (gap since the previous camera frame, time
-in Vision, time for the whole frame). Camera stalls and settings refreshes get their own lines. It's numbers only, never camera images, and it stays
-on your Mac unless you turn on Upload Gesture Logs (below). Turn it off when you're done; it grows
-by a few megabytes a minute.
+in Vision, time for the whole frame). Camera stalls and settings refreshes get their own lines. It's numbers only, never camera images. A log
+grows by a few megabytes a minute while a hand is in view; the folder keeps a week or 1 GB of logs
+and reports, whichever comes first, oldest deleted first, and the file being written is never touched.
 
-While recording, Conductor also runs Vision's face request and logs your face: its box (the height
+Conductor also runs Vision's face request and logs your face: its box (the height
 is a distance gauge), head roll, yaw and pitch in degrees (pitch positive looking down), Vision's
 landmark confidence, and for each eye the pupil, where it sits inside the eye opening, how open the
 eye is, and a glare figure (the share of near-white pixels over the eye, which climbs when a screen
-reflects in glasses). The face is detected while the log is on, while the display mode is "Display
-you're looking at", and during look calibration. While it is, the preview draws the face box, eye
+reflects in glasses). For the log alone the face is read on every sixth frame, since head angles and
+distance change slowly and the face request costs more than the hands; in the "Display you're
+looking at" mode it's every other frame, and during look calibration every frame. Frames in between
+log no face. While the face is being read, the preview draws the face box, eye
 outlines and pupils in cyan and shows the head angles next to the frame rate.
 
 Look calibration frames are logged too, with the label "Calibrating look". A note marks when each
@@ -382,9 +384,11 @@ at the power-saving rate.
 
 ## Uploading gesture logs
 
-Menu bar > Upload Gesture Logs sends every finished gesture log and gesture check report in
-`~/Library/Logs/Conductor/` to the upload server, so recordings from more than one Mac can be tuned
-against together. It's off by default, and greyed out in a build with no server. What goes is the
+Conductor sends every finished gesture log and gesture check report in `~/Library/Logs/Conductor/`
+to the upload server, so recordings from more than one Mac can be tuned against together. It isn't
+a setting: the log is how tracking gets tuned, and Settings > Data says exactly what it holds and
+what it never does (no camera images or video, nothing typed, no app names, nothing that names the
+person or the Mac). A build with no server keeps the logs local. What goes is the
 file on disk and nothing more: the log gzipped (about a tenth the size), the report as it is. The
 first time, the app makes itself a random install ID, kept in its preferences, and sends it with
 every file and in every log's setup line, so one Mac's recordings sit together without naming
@@ -393,12 +397,14 @@ hardware, camera or display UUID, or the apps they use. A preferences reset make
 that's the trade for an ID that can't be matched to a machine. The app version and macOS version go
 along as headers too.
 
-Uploads happen when you turn the item on, when a recording stops, when a gesture check saves its
-report, and at launch for anything left over (a quit mid-recording, a Mac that was offline). A file
+Uploads happen when tracking stops, once an hour while it runs (the log is split there), when a
+gesture check saves its report, from Settings > Data > Upload Now, and at launch for anything left
+over (a quit mid-recording, a Mac that was offline). A file
 counts as sent only once the server has it, so a failed upload is tried again at the next of those
 moments, and the server keeps the first copy if the same file arrives twice. A recording that gzips
-past 100 MB (over three hours) is skipped. The gzip and the upload run on their own queue, never
-the camera's, and the local files stay where they are.
+past 100 MB is skipped, which the hourly split should keep from ever happening. The gzip and the
+upload run on their own queue, never the camera's, and the local files stay until the folder's week
+or 1 GB runs out. Settings > Data also shows this Mac's install ID, to quote in a bug report.
 
 The server is a Cloudflare Worker in `ingest/` that files each upload in an R2 bucket as
 `recordings/<install id>/<file>.gz` or `reports/<install id>/<file>`. To stand one up:

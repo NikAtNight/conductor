@@ -23,8 +23,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let toggleItem = NSMenuItem(title: "Start Tracking", action: #selector(toggleTracking), keyEquivalent: "t")
     private let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let handMapItem = NSMenuItem(title: "Show Hand Map", action: #selector(toggleHandMap), keyEquivalent: "")
-    private let gestureLogItem = NSMenuItem(title: "Record Gesture Log", action: #selector(toggleGestureLog), keyEquivalent: "")
-    private let uploadLogItem = NSMenuItem(title: "Upload Gesture Logs", action: #selector(toggleUploadLog), keyEquivalent: "")
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -190,39 +188,23 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(toggleItem)
         menu.addItem(withTitle: "Hotkey: ⌃⌥⌘H", action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
+        // What you look at, then what you set up once, then the app itself.
         let preview = NSMenuItem(title: "Show Preview", action: #selector(showPreview), keyEquivalent: "p")
         preview.target = self
         menu.addItem(preview)
         handMapItem.target = self
         menu.addItem(handMapItem)
+        menu.addItem(.separator())
+        for (title, action) in [("Setup Assistant…", #selector(showSetup)), ("Calibrate Reach…", #selector(calibrate)),
+                                ("Calibrate Look…", #selector(calibrateLook)), ("Check Gestures…", #selector(checkGestures))] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
         let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
-        let calibrate = NSMenuItem(title: "Calibrate Reach…", action: #selector(calibrate), keyEquivalent: "")
-        calibrate.target = self
-        menu.addItem(calibrate)
-        let calibrateLook = NSMenuItem(title: "Calibrate Look…", action: #selector(calibrateLook), keyEquivalent: "")
-        calibrateLook.target = self
-        menu.addItem(calibrateLook)
-        let checkGestures = NSMenuItem(title: "Check Gestures…", action: #selector(checkGestures), keyEquivalent: "")
-        checkGestures.target = self
-        menu.addItem(checkGestures)
-        let setup = NSMenuItem(title: "Setup Assistant…", action: #selector(showSetup), keyEquivalent: "")
-        setup.target = self
-        menu.addItem(setup)
-        menu.addItem(.separator())
-        gestureLogItem.target = self
-        menu.addItem(gestureLogItem)
-        if engine.logUploader == nil {
-            // No action leaves it greyed out, the menu's own enabling at work.
-            uploadLogItem.title += " (no upload server in this build)"
-            uploadLogItem.action = nil
-        }
-        uploadLogItem.target = self
-        menu.addItem(uploadLogItem)
-        let logs = NSMenuItem(title: "Show Gesture Logs", action: #selector(showGestureLogs), keyEquivalent: "")
-        logs.target = self
-        menu.addItem(logs)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Conductor", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -233,8 +215,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         toggleItem.title = state.isRunning ? "Pause Tracking" : "Start Tracking"
         handMapItem.state = preferences.settings.showHandMap ? .on : .off
-        gestureLogItem.state = preferences.settings.recordGestureLog ? .on : .off
-        uploadLogItem.state = preferences.settings.uploadGestureLog ? .on : .off
         if !state.isRunning {
             statusLine.title = "Tracking is off"
         } else if let problem = state.error ?? state.warning {
@@ -262,15 +242,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         preferences.settings.showHandMap.toggle()
     }
 
-    @objc private func toggleGestureLog() {
-        preferences.settings.recordGestureLog.toggle()
-    }
-
-    @objc private func toggleUploadLog() {
-        preferences.settings.uploadGestureLog.toggle()
-    }
-
-    @objc private func showGestureLogs() {
+    private func showGestureLogs() {
         try? FileManager.default.createDirectory(at: GestureLog.directory, withIntermediateDirectories: true)
         NSWorkspace.shared.open(GestureLog.directory)
     }
@@ -278,7 +250,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func showPreview() {
         if previewWindow == nil {
             let view = PreviewView(state: state, preferences: preferences, session: engine.camera.session)
-            previewWindow = makeWindow(title: "Conductor Preview", content: view, size: NSSize(width: 900, height: 480))
+            let window = makeWindow(title: "Conductor Preview", content: view, size: NSSize(width: 900, height: 480))
+            // The preview is for watching yourself while you work in something else, so it stays
+            // above other windows, on every space, and doesn't drop behind when the menu is used.
+            window.level = .floating
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            previewWindow = window
         }
         present(previewWindow)
         if !state.isRunning { Task { await engine.start() } }
@@ -289,7 +266,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             settingsWindow = SettingsWindowController(
                 preferences: preferences,
                 calibrate: { [weak self] in self?.calibrate() },
-                calibrateLook: { [weak self] in self?.calibrateLook() })
+                calibrateLook: { [weak self] in self?.calibrateLook() },
+                data: DataSettingsView(installID: engine.logUploader?.installID ?? LogUploader.installID(in: .standard),
+                                       uploads: engine.logUploader != nil,
+                                       showLogs: { [weak self] in self?.showGestureLogs() },
+                                       uploadNow: { [weak self] in self?.engine.uploadLogs() }))
         }
         present(settingsWindow?.window)
     }

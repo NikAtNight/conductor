@@ -90,7 +90,6 @@ final class Preferences: ObservableObject {
         double("dwellTime", &s.dwellTime)
         bool("showCursorRing", &s.showCursorRing)
         bool("showHandMap", &s.showHandMap)
-        bool("recordGestureLog", &s.recordGestureLog)
         bool("soundCues", &s.soundCues)
         choice("pointerMode", &s.pointerMode)
         double("trackpadSpeed", &s.trackpadSpeed)

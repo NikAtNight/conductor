@@ -29,6 +29,12 @@ final class Engine: @unchecked Sendable {
     private var gestureLog: GestureLog?
     /// The setup line the current log has, so a refresh only writes one when something changed.
     private var loggedSetup: GestureLog.Setup?
+    /// The latest setup from the main actor, for the next log to open with.
+    private var latestSetup: GestureLog.Setup?
+    /// A session longer than this is split into more than one log, so no file outgrows the upload.
+    private static let logRotateAfter: TimeInterval = 3600
+    /// The face is detected on every Nth frame for the log alone; look mode runs it more often.
+    private static let faceLogStride = 6
     private var quality = TrackingQuality()
     private var frameCount = 0
     private var lastHandTime: CFTimeInterval = 0
@@ -63,11 +69,38 @@ final class Engine: @unchecked Sendable {
     }
 
     /// Sends every finished log and report the server hasn't got yet; see LogUploader. Nothing
-    /// happens unless uploading is on and this build has a server.
+    /// happens in a build without a server.
     @MainActor
     func uploadLogs() {
-        guard preferences.settings.uploadGestureLog, let logUploader else { return }
+        guard let logUploader else { return }
         camera.queue.async { [self] in logUploader.sweep(excluding: gestureLog?.url) }
+    }
+
+    // MARK: Gesture log
+
+    /// Camera queue. Every tracking session is logged (see GestureLog), opening with the setup line.
+    private func openLog() {
+        do {
+            let log = try GestureLog()
+            if let latestSetup {
+                log.setup(latestSetup)
+                loggedSetup = latestSetup
+            }
+            gestureLog = log
+        } catch {
+            NSLog("Conductor: can't start the gesture log: \(error)")
+        }
+    }
+
+    /// Camera queue. Closes the file, sends what's finished, and keeps the folder bounded.
+    private func closeLog() {
+        gestureLog = nil
+        loggedSetup = nil
+        if let logUploader {
+            logUploader.sweep() // ends with a prune
+        } else {
+            DispatchQueue.global(qos: .utility).async { GestureLog.prune() }
+        }
     }
 
     @MainActor
@@ -91,6 +124,7 @@ final class Engine: @unchecked Sendable {
             pipeline.reset()
             lastFrameTime = CACurrentMediaTime()
             startWatchdog()
+            openLog()
         }
         camera.start()
         state.isRunning = true
@@ -121,6 +155,7 @@ final class Engine: @unchecked Sendable {
             stopGlide()
             post(pipeline.releaseHeld())
             cancelCalibration()
+            closeLog()
         }
         if case .running = state.calibration { state.calibration = .none }
         state.isRunning = false
@@ -136,6 +171,7 @@ final class Engine: @unchecked Sendable {
             watchdog?.cancel()
             stopGlide()
             input.releaseAll()
+            gestureLog = nil // closed, not sent: the next launch's sweep takes it
         }
         camera.stop()
     }
@@ -197,7 +233,6 @@ final class Engine: @unchecked Sendable {
                                      accessibility: trusted, settings: snapshot)
         let mainMs = (CACurrentMediaTime() - started) * 1000
         camera.queue.async { [self] in
-            let uploadTurnedOn = snapshot.uploadGestureLog && !prefs.uploadGestureLog
             prefs = snapshot
             displayLayout = layout
             post(pipeline.apply(snapshot, map: map, displays: bounds,
@@ -206,26 +241,12 @@ final class Engine: @unchecked Sendable {
             post(pipeline.setInputAllowed(trusted))
             publishBox()
             publishTargetDisplay()
-            var recordingStopped = false
-            if !snapshot.recordGestureLog {
-                recordingStopped = gestureLog != nil
-                gestureLog = nil // closes the file, so it can be sent below
-                loggedSetup = nil
-            } else if gestureLog == nil {
-                do {
-                    gestureLog = try GestureLog()
-                } catch {
-                    NSLog("Conductor: can't start the gesture log: \(error)")
-                }
-            }
+            latestSetup = setup
             if let gestureLog, loggedSetup != setup {
                 gestureLog.setup(setup)
                 loggedSetup = setup
             }
             gestureLog?.note("refresh: \(Int(mainMs)) ms on the main thread")
-            if snapshot.uploadGestureLog, uploadTurnedOn || recordingStopped {
-                logUploader?.sweep(excluding: gestureLog?.url)
-            }
         }
     }
 
@@ -445,6 +466,10 @@ final class Engine: @unchecked Sendable {
         frameCount += 1
         let idle = prefs.powerSaving && lastHandTime > 0 && now - lastHandTime > Self.idleAfter
         if idle, frameCount % Self.idleStride != 0 { return }
+        if let gestureLog, Date().timeIntervalSince(gestureLog.started) > Self.logRotateAfter {
+            closeLog()
+            openLog()
+        }
 
         if frameCount % 15 == 0, let pixels = CMSampleBufferGetImageBuffer(buffer),
            let luma = TrackingQuality.meanLuma(of: pixels) {
@@ -469,32 +494,32 @@ final class Engine: @unchecked Sendable {
                         sinceLastMs: sinceLast.map { $0 * 1000 }, detectMs: detectMs) { return }
         let fps = Double(frameTimes.count)
 
-        // The face feeds the log and, in look mode, the display pick. Look mode alone detects it on
-        // every other frame to save CPU; the picker's dwell makes a frame's delay invisible.
+        // The face feeds the log and, in look mode, the display pick. Look mode detects it on every
+        // other frame (the picker's dwell hides a frame's delay); the log alone every sixth, since
+        // head angles and distance change slowly and the face request costs more than the hands.
+        // Frames in between reuse the last face for the picker and the preview, and log none, so
+        // the log holds only fresh readings.
         let looking = prefs.displayMode == .lookedAt
-        let wantsFace = gestureLog != nil || looking
-        var face: FacePose?
+        let detectsFace = frameCount % (looking ? 2 : Self.faceLogStride) == 0
+        var freshFace: FacePose?
         var faceMs: Double = 0
-        if wantsFace, gestureLog != nil || frameCount % 2 == 0 {
+        if detectsFace {
             let faceStart = CACurrentMediaTime()
-            face = faceTracker.detect(in: buffer)
+            freshFace = faceTracker.detect(in: buffer)
             faceMs = (CACurrentMediaTime() - faceStart) * 1000
-            lastFace = face
-        } else if looking {
-            face = lastFace
-        } else {
-            lastFace = nil
+            lastFace = freshFace
         }
+        let face = freshFace ?? lastFace
 
         let frame = pipeline.step(hands: hands, face: face, at: now) { CGEvent(source: nil)?.location }
         post(frame.commands)
         publishBox()
         publishTargetDisplay()
         if let gestureLog {
-            gestureLog.write(time: Date(), fps: fps, hands: hands, primary: primary, face: face,
+            gestureLog.write(time: Date(), fps: fps, hands: hands, primary: primary, face: freshFace,
                              output: frame.recognized, cursor: frame.cursor, sinceLastMs: sinceLast.map { $0 * 1000 },
-                             detectMs: detectMs, faceMs: faceMs, processMs: (CACurrentMediaTime() - now) * 1000,
-                             warning: warning, idle: idle)
+                             detectMs: detectMs, faceMs: detectsFace ? faceMs : nil,
+                             processMs: (CACurrentMediaTime() - now) * 1000, warning: warning, idle: idle)
         }
         let recognized = frame.recognized
         let clicked = frame.commands.contains(where: \.isClick)

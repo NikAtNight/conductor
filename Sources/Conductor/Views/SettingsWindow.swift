@@ -7,7 +7,7 @@ import SwiftUI
 final class SettingsWindowController: NSWindowController {
     static let width: CGFloat = 540
 
-    init(preferences: Preferences, calibrate: @escaping () -> Void, calibrateLook: @escaping () -> Void) {
+    init(preferences: Preferences, calibrate: @escaping () -> Void, calibrateLook: @escaping () -> Void, data: DataSettingsView) {
         let tabs = NSTabViewController()
         tabs.tabStyle = .toolbar
 
@@ -17,6 +17,7 @@ final class SettingsWindowController: NSWindowController {
             ("Gestures", "hand.tap", AnyView(GestureSettingsView(preferences: preferences)), 660),
             ("Hands", "hand.wave", AnyView(HandsSettingsView(preferences: preferences)), 660),
             ("Camera", "web.camera", AnyView(CameraSettingsView(preferences: preferences)), 420),
+            ("Data", "waveform", AnyView(data), 620),
         ]
         for (title, symbol, view, height) in all {
             let host = NSHostingController(rootView: view.frame(width: Self.width, height: height))

@@ -2,9 +2,11 @@ import AVFoundation
 import CoreGraphics
 import Foundation
 
-/// Opt-in record of every camera frame: what the tracker saw, the measurements the recognizer
-/// decides with, and what it did. For tuning thresholds against real hands. One JSON object per
-/// line, landmarks and numbers only, never camera images. Used from the camera queue only.
+/// Record of every camera frame while tracking runs: what the tracker saw, the measurements the
+/// recognizer decides with, and what it did. For tuning thresholds against real hands. One JSON
+/// object per line, landmarks and numbers only, never camera images. Used from the camera queue
+/// only. Engine opens one per session and splits long sessions hourly; `prune` keeps the folder
+/// from growing without end.
 final class GestureLog {
     struct Hand: Encodable {
         var chirality: String
@@ -200,6 +202,7 @@ final class GestureLog {
     }
 
     let url: URL
+    let started: Date
     private let handle: FileHandle
     private let encoder = JSONEncoder()
 
@@ -216,12 +219,38 @@ final class GestureLog {
             n += 1
         }
         url = candidate
+        started = date
         FileManager.default.createFile(atPath: url.path, contents: nil)
         handle = try FileHandle(forWritingTo: url)
     }
 
     deinit {
         try? handle.close()
+    }
+
+    /// Keeps the folder bounded now that every session is logged: logs and reports older than
+    /// `keepDays`, and the oldest once the total passes `keepBytes`, are deleted. The log being
+    /// written is never touched, nor is anything else in the folder. Returns what it deleted.
+    @discardableResult
+    static func prune(directory: URL = GestureLog.directory, keepBytes: Int = 1 << 30, keepDays: Int = 7,
+                      excluding active: URL? = nil, now: Date = Date()) -> [String] {
+        let keys: Set<URLResourceKey> = [.fileSizeKey, .contentModificationDateKey]
+        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: Array(keys)) else { return [] }
+        let ours = files.compactMap { url -> (url: URL, size: Int, modified: Date)? in
+            guard url.standardizedFileURL != active?.standardizedFileURL, LogUploader.Kind(fileName: url.lastPathComponent) != nil,
+                  let values = try? url.resourceValues(forKeys: keys), let size = values.fileSize,
+                  let modified = values.contentModificationDate else { return nil }
+            return (url, size, modified)
+        }.sorted { $0.modified > $1.modified }
+        let cutoff = now.addingTimeInterval(-Double(keepDays) * 86400)
+        var total = 0
+        var deleted: [String] = []
+        for file in ours {
+            total += file.size
+            guard file.modified < cutoff || total > keepBytes else { continue }
+            if (try? FileManager.default.removeItem(at: file.url)) != nil { deleted.append(file.url.lastPathComponent) }
+        }
+        return deleted
     }
 
     func write(time: Date, fps: Double, hands: [HandPose], primary: HandPose?, face: FacePose? = nil,
