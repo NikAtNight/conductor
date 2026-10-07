@@ -82,15 +82,16 @@ struct GestureRecognizer {
 
     typealias MainHand = Settings.MainHand
 
+    /// The fields without a default here come from Settings, through `init(_:)`.
     struct Config {
         /// Thumb-to-fingertip distance (in hand scales) below which a pinch engages.
-        var pinchEngage: CGFloat = 0.35
+        var pinchEngage: CGFloat
         /// Distance above which it releases. Must exceed `pinchEngage` to give hysteresis.
-        var pinchRelease: CGFloat = 0.55
+        var pinchRelease: CGFloat
         /// Two button presses this close together, in seconds, count as a double click.
         var doubleClickInterval: TimeInterval = 0.4
         /// Pointer stays frozen after a button engages until the hand moves this far (frame units).
-        var pinchDeadZone: CGFloat = 0.012
+        var pinchDeadZone: CGFloat
         /// Frames of missing hand tolerated before buttons are released. Vision drops a pinched hand
         /// for up to six frames at a time in recorded logs; releasing a held key or drag over that
         /// cancelled dictation mid-sentence.
@@ -104,21 +105,21 @@ struct GestureRecognizer {
         /// shouldn't be held longer than this.
         var neighbourSwapFrames = 3
         /// Which hand drives the cursor when two are visible.
-        var mainHand: MainHand = .right
+        var mainHand: MainHand
         /// Require an open hand held still before anything moves.
-        var requireReadyPose = false
+        var requireReadyPose: Bool
         var readyHold: TimeInterval = 0.5
         /// The ready pose resets if the pointer drifts farther than this while holding.
         var readyStillness: CGFloat = 0.03
         /// With the ready pose on, control is handed back after the hand is gone this long.
         var releaseAfter: TimeInterval = 1.5
         /// Click by holding the pointer still.
-        var dwellClick = false
-        var dwellTime: TimeInterval = 0.8
+        var dwellClick: Bool
+        var dwellTime: TimeInterval
         /// Pointer must stay within this radius (frame units) for a dwell to count.
-        var dwellRadius: CGFloat = 0.015
+        var dwellRadius: CGFloat
         /// Matches ScreenMapper: with mirroring, moving your hand to your left is "left".
-        var mirrored = true
+        var mirrored: Bool
         /// Sideways knuckle travel in frame units within `swipeWindow`. The wrist stays almost
         /// still during a flick, so including it in the average missed short wrist flicks.
         /// Travel must also be mostly horizontal (see swipeTravel).
@@ -164,7 +165,20 @@ struct GestureRecognizer {
         /// A held scroll trigger (fist, two fingers) works as a lever too: where the knuckles were
         /// when it engaged is neutral, and holding them above or below it scrolls at a steady rate.
         /// Off, the page follows the hand's travel instead and a flick can coast.
-        var scrollLever = true
+        var scrollLever: Bool
+
+        init(_ settings: Settings = Settings()) {
+            pinchEngage = CGFloat(settings.pinchEngage)
+            pinchRelease = CGFloat(settings.pinchRelease)
+            pinchDeadZone = CGFloat(settings.pinchDeadZone)
+            mainHand = settings.mainHand
+            requireReadyPose = settings.requireReadyPose
+            dwellClick = settings.dwellClick
+            dwellTime = settings.dwellTime
+            dwellRadius = CGFloat(settings.dwellRadius)
+            mirrored = settings.mirrored
+            scrollLever = settings.scrollStyle == .lever
+        }
     }
 
     var config: Config

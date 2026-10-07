@@ -5,7 +5,7 @@ import XCTest
 final class PointingTests: XCTestCase {
     typealias Action = GestureRecognizer.Action
     let dt = 1.0 / 30
-    var r = GestureRecognizer()
+    var r = GestureRecognizer(config: .withoutReadyPose)
     var t = 0.0
     var actions: [Action] = []
     var last: GestureRecognizer.Output?
@@ -43,7 +43,7 @@ final class PointingTests: XCTestCase {
     func testResumingWithAPinchWaitsForTheHoldToo() {
         var map = GestureMap.standard
         map[.littlePinch] = .pauseTracking
-        r = GestureRecognizer(map: map)
+        r = GestureRecognizer(config: .withoutReadyPose, map: map)
         frame(PoseFixtures.pinched(.littleTip), count: 3)
         XCTAssertTrue(r.isPaused)
         frame(PoseFixtures.openHand(), count: 3)
@@ -68,7 +68,7 @@ final class TwoFingerScrollTests: XCTestCase {
     typealias Action = GestureRecognizer.Action
     let dt = 1.0 / 30
     let back = Shortcut(keyCode: 33, modifiers: CGEventFlags.maskCommand.rawValue)
-    var r = GestureRecognizer()
+    var r = GestureRecognizer(config: .withoutReadyPose)
     var t = 0.0
     var outputs: [GestureRecognizer.Output] = []
 
@@ -139,7 +139,7 @@ final class TwoFingerScrollTests: XCTestCase {
     func testThePoseFreezesTheCursorEvenWithOnlySwipesBound() {
         var map = GestureMap.standard
         map[.twoFingers] = .none
-        r = GestureRecognizer(map: map)
+        r = GestureRecognizer(config: .withoutReadyPose, map: map)
         frame(PoseFixtures.twoFingers(), count: 4)
         XCTAssertNil(outputs.last?.pointer)
         XCTAssertEqual(actions, [])
@@ -148,7 +148,7 @@ final class TwoFingerScrollTests: XCTestCase {
     func testTwoFingersBoundToPausePauseAndResume() {
         var map = GestureMap.standard
         map[.twoFingers] = .pauseTracking
-        r = GestureRecognizer(map: map)
+        r = GestureRecognizer(config: .withoutReadyPose, map: map)
         frame(PoseFixtures.twoFingers(), count: 4)
         XCTAssertTrue(r.isPaused)
         frame(PoseFixtures.twoFingers(), count: 10)
@@ -162,7 +162,7 @@ final class TwoFingerScrollTests: XCTestCase {
         var map = GestureMap.standard
         map[.twoFingers] = .leftButton
         map[.swipeRight] = .pauseTracking
-        r = GestureRecognizer(map: map)
+        r = GestureRecognizer(config: .withoutReadyPose, map: map)
         flickSideways()
         XCTAssertTrue(r.isPaused)
         XCTAssertEqual(actions.filter { $0 == .leftDown(clickCount: 1) }.count, 1)

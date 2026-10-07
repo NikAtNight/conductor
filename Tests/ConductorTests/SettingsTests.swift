@@ -113,4 +113,18 @@ final class SettingsTests: XCTestCase {
         XCTAssertNil(s.lookModel)
         XCTAssertEqual(s.displayMode, Settings().displayMode)
     }
+
+    func testTheRecognizerConfigFollowsTheSettings() {
+        var s = Settings()
+        s.mirrored = false
+        s.mainHand = .left
+        s.setPinchEngage(0.4)
+        s.scrollStyle = .travel
+        let config = GestureRecognizer.Config(s)
+        XCTAssertFalse(config.mirrored)
+        XCTAssertEqual(config.mainHand, .left)
+        XCTAssertEqual(config.pinchEngage, 0.4, accuracy: 1e-9)
+        XCTAssertFalse(config.scrollLever)
+        XCTAssertEqual(GestureRecognizer.Config().requireReadyPose, Settings().requireReadyPose, "one set of defaults")
+    }
 }

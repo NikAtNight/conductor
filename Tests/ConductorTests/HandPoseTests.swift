@@ -5,9 +5,16 @@ import XCTest
 typealias PoseFixtures = HandPoseExamples
 
 extension GestureRecognizer.Config {
-    /// Pinches engage on their first frame. For tests about everything else.
-    static var instant: Self {
+    /// The shipped settings, except that a hand works from its first frame without the ready pose.
+    static var withoutReadyPose: Self {
         var config = Self()
+        config.requireReadyPose = false
+        return config
+    }
+
+    /// `withoutReadyPose`, and pinches engage on their first frame. For tests about everything else.
+    static var instant: Self {
+        var config = withoutReadyPose
         config.pinchHold = 0
         return config
     }

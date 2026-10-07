@@ -98,16 +98,7 @@ struct FramePipeline {
         relayoutBox()
         var commands: [InputCommand] = []
         for action in recognizer.replaceMap(map) { commands += self.commands(for: action) }
-        recognizer.config.pinchEngage = snapshot.pinchEngage
-        recognizer.config.pinchRelease = snapshot.pinchRelease
-        recognizer.config.mainHand = snapshot.mainHand
-        recognizer.config.requireReadyPose = snapshot.requireReadyPose
-        recognizer.config.dwellClick = snapshot.dwellClick
-        recognizer.config.dwellTime = snapshot.dwellTime
-        recognizer.config.dwellRadius = CGFloat(snapshot.dwellRadius)
-        recognizer.config.pinchDeadZone = CGFloat(snapshot.pinchDeadZone)
-        recognizer.config.mirrored = snapshot.mirrored
-        recognizer.config.scrollLever = snapshot.scrollStyle == .lever
+        recognizer.config = GestureRecognizer.Config(snapshot)
         relative.speed = CGFloat(snapshot.trackpadSpeed)
         relative.mirrored = snapshot.mirrored
         precision.slowGain = CGFloat(snapshot.slowMoveSpeed)

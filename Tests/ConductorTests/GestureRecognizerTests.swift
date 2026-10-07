@@ -212,7 +212,7 @@ final class PinchRobustnessTests: XCTestCase {
     func testFoldedThumbCannotStartAPinchWhileTwoFingersAreBeingConfirmed() {
         var map = GestureMap.standard
         map[.ringPinch] = .holdKey(rightCommand)
-        var r = GestureRecognizer(map: map)
+        var r = GestureRecognizer(config: .withoutReadyPose, map: map)
         var hand = PoseFixtures.twoFingers()
         hand.joints[.thumbTip] = hand[.ringTip]
         // The thumb arrives first, one frame before the little finger finishes curling.
@@ -231,7 +231,7 @@ final class PinchRobustnessTests: XCTestCase {
         var map = GestureMap.standard
         map[.ringPinch] = .holdKey(rightCommand)
         for trigger in [Trigger.twoFingers, .swipeLeft, .swipeRight] { map[trigger] = .none }
-        var r = GestureRecognizer(map: map)
+        var r = GestureRecognizer(config: .withoutReadyPose, map: map)
         var hand = PoseFixtures.twoFingers()
         hand.joints[.thumbTip] = hand[.ringTip]
         XCTAssertEqual(run(&r, [hand], from: 0, count: 10), [.keyDown(rightCommand)])

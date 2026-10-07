@@ -145,10 +145,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     /// gesture logs; nothing is changed by it.
     @objc func checkGestures() {
         showPreview()
-        var config = GestureRecognizer.Config()
-        config.pinchEngage = preferences.settings.pinchEngage
-        config.pinchRelease = preferences.settings.pinchRelease
-        gestureCheck.start(engine: engine, config: config) { report in
+        gestureCheck.start(engine: engine, config: GestureRecognizer.Config(preferences.settings)) { report in
             guard let report else { return }
             do {
                 _ = try GestureCheck.save(report)
