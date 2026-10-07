@@ -18,6 +18,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var cues: Cues?
     private let lookCalibration = LookCalibrationController()
     private let gestureCheck = GestureCheckController()
+    private let updates = UpdateController()
     private var cancellables: Set<AnyCancellable> = []
 
     private let toggleItem = NSMenuItem(title: "Start Tracking", action: #selector(toggleTracking), keyEquivalent: "t")
@@ -69,6 +70,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         if !UserDefaults.standard.bool(forKey: "setupComplete") {
             DispatchQueue.main.async { [weak self] in self?.showSetup() }
         }
+        updates.start()
     }
 
     @objc func showSetup() {
@@ -206,6 +208,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         settings.target = self
         menu.addItem(settings)
         menu.addItem(.separator())
+        let update = NSMenuItem(title: "Check for Updates…", action: #selector(UpdateController.checkForUpdates(_:)), keyEquivalent: "")
+        update.target = updates
+        menu.addItem(update)
         let quit = NSMenuItem(title: "Quit Conductor", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)

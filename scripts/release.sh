@@ -1,7 +1,11 @@
 #!/bin/bash
 # Builds a universal Conductor.app signed with the Developer ID certificate in the keychain,
-# notarizes it when a notarytool keychain profile exists, staples the ticket, and zips it to
-# dist/Conductor-<version>.zip for a GitHub release. Doesn't touch /Applications.
+# notarizes it when a notarytool keychain profile exists, staples the ticket, zips it to
+# dist/Conductor-<version>.zip, and writes the Sparkle appcast for it to dist/appcast.xml. Both
+# go on the GitHub release; the app checks the latest release's appcast. The appcast is signed
+# with the Sparkle EdDSA key in the keychain (its public half is in build-app.sh). Doesn't
+# touch /Applications. Gesture log uploads stay off unless CONDUCTOR_UPLOAD_URL and
+# CONDUCTOR_UPLOAD_TOKEN are set in the environment, the same as build-app.sh.
 #
 #   VERSION=0.1.0 BUILD_NUMBER=1 scripts/release.sh
 #
@@ -44,4 +48,22 @@ else
   echo "  xcrun notarytool store-credentials $NOTARY_PROFILE --apple-id <apple id> --team-id <team id>" >&2
 fi
 
+# The appcast entry signs the final zip, so this comes after stapling.
+GENERATE_APPCAST="$(find .build/artifacts -type f -name generate_appcast -print -quit)"
+if [[ -z "$GENERATE_APPCAST" ]]; then
+  echo "error: generate_appcast not found under .build/artifacts" >&2
+  exit 1
+fi
+APPCAST_DIR="$DIST/appcast"
+rm -rf "$APPCAST_DIR"
+mkdir -p "$APPCAST_DIR"
+cp "$ZIP" "$APPCAST_DIR/"
+"$GENERATE_APPCAST" \
+  --download-url-prefix "https://github.com/NikAtNight/conductor/releases/download/v$VERSION/" \
+  --link "https://github.com/NikAtNight/conductor" \
+  "$APPCAST_DIR"
+cp "$APPCAST_DIR/appcast.xml" "$DIST/appcast.xml"
+rm -rf "$APPCAST_DIR"
+
 shasum -a 256 "$ZIP"
+echo "Upload $ZIP and $DIST/appcast.xml to the release."

@@ -69,10 +69,31 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>Conductor watches your hands through the camera to move the cursor and click. Video never leaves this Mac.</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 Nikhil Kapadia.</string>
+    <key>SUFeedURL</key>
+    <string>https://github.com/NikAtNight/conductor/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>4/wQ6XehB3rZhDeckFB1O5atGbo7TkxxYcDsC175bos=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
 $UPLOAD_PLIST
 </dict>
 </plist>
 PLIST
+
+# Sparkle is a binary framework: the build links against it, so the app has to carry it, and the
+# binary needs an rpath to find it. Without either the app dies at launch.
+SPARKLE_FRAMEWORK="$(find .build/artifacts -type d -name Sparkle.framework -path '*macos*' -print -quit)"
+if [[ -z "$SPARKLE_FRAMEWORK" ]]; then
+  echo "error: Sparkle.framework not found under .build/artifacts; run swift package resolve" >&2
+  exit 1
+fi
+mkdir -p "$APP/Contents/Frameworks"
+ditto "$SPARKLE_FRAMEWORK" "$APP/Contents/Frameworks/Sparkle.framework"
+if ! otool -l "$APP/Contents/MacOS/Conductor" | grep -q '@executable_path/../Frameworks'; then
+  install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/Conductor"
+fi
 
 # macOS ties the camera and Accessibility grants to the code signature, and an ad-hoc signature
 # changes on every build, which silently voids the grant. Prefer a real identity when one exists.
@@ -83,8 +104,16 @@ fi
 SIGN_FLAGS=(--force --sign "${IDENTITY:--}")
 if [[ "$IDENTITY" == "Developer ID Application"* ]]; then
   # Notarization needs the hardened runtime and a secure timestamp, and the hardened runtime
-  # needs the camera entitlement before AVFoundation will open the camera.
+  # needs the camera entitlement before AVFoundation will open the camera. Nested code signs
+  # first, inside out: Sparkle carries two XPC services, the Autoupdate helper and Updater.app,
+  # and an unsigned one fails notarization.
+  while IFS= read -r nested; do
+    codesign --force --sign "$IDENTITY" --options runtime --timestamp "$nested"
+  done < <(find "$APP/Contents/Frameworks/Sparkle.framework" \( -name '*.xpc' -o -name '*.app' -o -name Autoupdate \) -print)
+  codesign --force --sign "$IDENTITY" --options runtime --timestamp "$APP/Contents/Frameworks/Sparkle.framework"
   SIGN_FLAGS+=(--options runtime --timestamp --entitlements Conductor.entitlements)
+else
+  codesign --force --sign "${IDENTITY:--}" --deep "$APP/Contents/Frameworks/Sparkle.framework"
 fi
 codesign "${SIGN_FLAGS[@]}" "$APP"
 if [[ "${IDENTITY:--}" == "-" ]]; then
