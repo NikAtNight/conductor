@@ -15,6 +15,8 @@ final class InputController: @unchecked Sendable {
     }
 
     var isLeftButtonDown: Bool { leftDown }
+    /// Where the cursor was last put, and where the next button goes down.
+    var location: CGPoint { position }
 
     func move(to point: CGPoint) {
         position = point

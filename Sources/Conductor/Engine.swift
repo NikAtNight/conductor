@@ -15,6 +15,9 @@ final class Engine: @unchecked Sendable {
     private let tracker = HandTracker()
     private let faceTracker = FaceTracker()
     private let input = InputController()
+    /// Moves the cursor between the pipeline's targets at `CursorGlide.rate`; see aim.
+    private var glide = CursorGlide()
+    private var glideTimer: DispatchSourceTimer?
     private var frameTimes: [CFTimeInterval] = []
     private var permissionTimer: Timer?
 
@@ -102,6 +105,7 @@ final class Engine: @unchecked Sendable {
         camera.queue.async { [self] in
             watchdog?.cancel()
             watchdog = nil
+            stopGlide()
             post(pipeline.releaseHeld())
             cancelCalibration()
         }
@@ -117,6 +121,7 @@ final class Engine: @unchecked Sendable {
     func shutdown() {
         camera.queue.sync {
             watchdog?.cancel()
+            stopGlide()
             input.releaseAll()
         }
         camera.stop()
@@ -355,7 +360,7 @@ final class Engine: @unchecked Sendable {
     private func post(_ commands: [InputCommand]) {
         for command in commands {
             switch command {
-            case .move(let point): input.move(to: point)
+            case .move(let point): aim(point)
             case .leftDown(let count): input.leftDown(clickCount: count)
             case .leftUp(let count): input.leftUp(clickCount: count)
             case .rightClick: input.rightClick()
@@ -367,6 +372,34 @@ final class Engine: @unchecked Sendable {
             case .releaseAll: input.releaseAll()
             }
         }
+    }
+
+    /// Camera queue. The pipeline aims the cursor once per camera frame; the cursor gets there over
+    /// the frame that follows, a tick at a time, so motion reads as motion and not as 30 hops a
+    /// second. The glide starts from wherever the cursor really is, which also covers the mouse
+    /// having been touched meanwhile. A button posted in the same batch lands at the cursor's
+    /// current spot: a pinch freezes the pointer for longer than a glide takes, so that is the target.
+    private func aim(_ target: CGPoint) {
+        let current = CGEvent(source: nil)?.location ?? input.location
+        glide.aim(at: target, from: current, at: CACurrentMediaTime())
+        guard glideTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: camera.queue)
+        timer.schedule(deadline: .now() + 1 / CursorGlide.rate, repeating: 1 / CursorGlide.rate, leeway: .milliseconds(1))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            if let point = glide.position(at: CACurrentMediaTime()) { input.move(to: point) }
+            // The timer only runs while there's ground to cover, so an idle hand costs no wakeups.
+            if !glide.isGliding { stopGlide() }
+        }
+        timer.resume()
+        glideTimer = timer
+    }
+
+    /// Camera queue. Ends a glide in progress; the cursor stays where it is.
+    private func stopGlide() {
+        glide.stop()
+        glideTimer?.cancel()
+        glideTimer = nil
     }
 
     /// Power saving: after this long with no hand, analyze only every `idleStride`th frame.

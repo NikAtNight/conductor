@@ -170,11 +170,79 @@ final class ScrollModeTests: XCTestCase {
     func testFingerShapesDoNothingInScrollMode() {
         enterScrollMode()
         frames(PoseFixtures.pinched(), for: 0.3)
-        frames(PoseFixtures.fist(), for: 0.3)
+        frames(PoseFixtures.fist(), for: 0.1) // short of the fist's own way out
         frames(PoseFixtures.pinched(.middleTip), for: 0.3)
         frames(PoseFixtures.twoFingers(at: CGPoint(x: 0.7, y: 0.3)), for: 0.3)
         XCTAssertTrue(actions.allSatisfy { if case .scrollLever = $0 { return true } else { return false } })
         XCTAssertTrue(r.inScrollMode)
+    }
+
+    /// Nikhil's crosses read as crossed on about half their frames: Vision keeps losing the hidden
+    /// index tip. Two holds of 0.6 s in a recorded log never switched back out at the 0.3 s hold.
+    func testAFlickeringCrossStillLeavesScrollMode() {
+        enterScrollMode()
+        events.removeAll()
+        // 0.5 s of crossing that reads crossed, uncrossed, crossed, uncrossed, uncrossed, over and over.
+        for i in 0..<15 {
+            frame([[0, 2].contains(i % 5) ? PoseFixtures.crossed() : PoseFixtures.twoFingers()])
+        }
+        XCTAssertFalse(r.inScrollMode)
+        XCTAssertEqual(events, [.scrollModeOff])
+    }
+
+    func testTheSameFlickerCannotSwitchScrollModeOn() {
+        frame([PoseFixtures.openHand()])
+        for i in 0..<15 {
+            frame([[0, 2].contains(i % 5) ? PoseFixtures.crossed() : PoseFixtures.twoFingers()])
+        }
+        XCTAssertFalse(r.inScrollMode, "switching in by mistake stops the cursor; it keeps the full hold")
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testAFistHeldForAMomentLeavesScrollModeAndKeepsWorkingAsAFist() {
+        enterScrollMode()
+        events.removeAll()
+        frames(PoseFixtures.fist(), for: 0.1)
+        XCTAssertTrue(r.inScrollMode)
+        XCTAssertEqual(last.label, "Scroll mode: hold the fist to leave")
+        XCTAssertTrue(lever.allSatisfy { $0 == 0 }, "closing the hand doesn't scroll")
+        frames(PoseFixtures.fist(), for: 0.15)
+        XCTAssertFalse(r.inScrollMode)
+        XCTAssertEqual(events, [.scrollModeOff])
+        // Still a fist: it scrolls as a fist does, from where it rested when it left, without
+        // clicking or flipping back.
+        frames(PoseFixtures.fist(), for: 0.1)
+        frames(PoseFixtures.fist(at: CGPoint(x: 0.5, y: 0.36)), for: 0.2)
+        XCTAssertEqual(last.mode, .scroll)
+        XCTAssertGreaterThan(lever.last!, 0)
+        XCTAssertFalse(actions.contains(.leftDown(clickCount: 1)))
+        XCTAssertEqual(events, [.scrollModeOff])
+        frame([PoseFixtures.openHand()])
+        XCTAssertEqual(last.mode, .point)
+        XCTAssertNotNil(last.pointer, "the cursor is back")
+    }
+
+    func testABriefFistInScrollModeChangesNothing() {
+        enterScrollMode()
+        events.removeAll()
+        frames(PoseFixtures.fist(), for: 0.1)
+        frames(PoseFixtures.openHand(), for: 0.2)
+        frames(PoseFixtures.fist(), for: 0.1)
+        XCTAssertTrue(r.inScrollMode)
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testAFistBoundToScrollModeIsASwitchNotTheWayOut() {
+        var map = GestureMap.standard
+        map[.fist] = .scrollMode
+        r = GestureRecognizer(config: .instant, map: map)
+        frame([PoseFixtures.openHand()])
+        frames(PoseFixtures.fist(), for: 1)
+        XCTAssertTrue(r.inScrollMode, "holding the fist that switched in doesn't switch straight back out")
+        frames(PoseFixtures.openHand(), for: 0.5)
+        frames(PoseFixtures.fist(), for: 0.1)
+        XCTAssertFalse(r.inScrollMode)
+        XCTAssertEqual(events, [.scrollModeOn, .scrollModeOff])
     }
 
     func testCrossingAgainSwitchesBackOnceAndStopsScrolling() {
@@ -202,25 +270,24 @@ final class ScrollModeTests: XCTestCase {
         XCTAssertEqual(events, [.scrollModeOff])
     }
 
+    /// Switching in keeps the full hold, so these two run on the way in.
     func testRiddenOutFramesDoNotCountAsHolding() {
-        enterScrollMode()
-        events.removeAll()
+        frame([PoseFixtures.openHand()])
         // 0.27 s of crossed readings around three bad frames: not a hold yet, whatever the clock says.
         frames(PoseFixtures.crossed(), for: 0.15)
         frame([PoseFixtures.twoFingers()], count: r.config.crossDropFrames)
         frames(PoseFixtures.crossed(), for: 0.12)
-        XCTAssertTrue(r.inScrollMode)
-        frames(PoseFixtures.crossed(), for: 0.1)
         XCTAssertFalse(r.inScrollMode)
+        frames(PoseFixtures.crossed(), for: 0.1)
+        XCTAssertTrue(r.inScrollMode)
     }
 
     func testUncrossingForLongerStartsTheHoldOver() {
-        enterScrollMode()
-        events.removeAll()
+        frame([PoseFixtures.openHand()])
         frames(PoseFixtures.crossed(), for: 0.15)
         frame([PoseFixtures.twoFingers()], count: r.config.crossDropFrames + 1)
         frames(PoseFixtures.crossed(), for: 0.2)
-        XCTAssertTrue(r.inScrollMode, "0.15 s and 0.2 s with a real uncross between are two short holds")
+        XCTAssertFalse(r.inScrollMode, "0.15 s and 0.2 s with a real uncross between are two short holds")
         XCTAssertEqual(events, [])
     }
 

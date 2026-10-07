@@ -147,6 +147,15 @@ struct GestureRecognizer {
         /// in recorded logs that restarted the hold on six attempts out of seven. The ridden-out
         /// frames don't count toward `crossHold`, so a borderline reading can't be padded into a switch.
         var crossDropFrames = 3
+        /// Seconds the cross must hold to leave scroll mode. Shorter than `crossHold`: the finger
+        /// underneath hides its tip, and Vision found it on about half the frames of a real cross in
+        /// recorded logs, so holds of 0.6 s read as 0.27 s of crossing and never switched back. A
+        /// switch out by mistake only brings the pointer back, where a switch in by mistake stops it.
+        var crossExitHold: TimeInterval = 0.15
+        /// Seconds a fist must hold in scroll mode to leave it, for when the cross won't read at
+        /// all. A relaxed hand working the lever read as a fist on one frame in 415 in recorded
+        /// logs; the fists Nikhil made when scrolling "stopped working" lasted 0.2 to 0.23 s.
+        var fistExitHold: TimeInterval = 0.2
         /// Both hands' thumb-to-index distances must be under this to engage the two-hand pinch,
         /// and one over `twoHandPinchRelease` lets it go. Looser than a one-hand pinch: pinching
         /// both hands curls the other fingers into fists and the tips sit 0.4 to 0.5 apart in the
@@ -245,6 +254,8 @@ struct GestureRecognizer {
     private var switchHeld: Trigger?
     /// The resting knuckle height scroll mode measures from. It follows the hand until `lockedAt`.
     private var neutral: (y: CGFloat, lockedAt: TimeInterval)?
+    /// In scroll mode: when the hand closed into a fist, while it stays one (see scrollModeUpdate).
+    private var fistSince: TimeInterval?
     /// Consecutive frames needed to start or end the two-finger pose.
     static let poseFrames = 3
 
@@ -281,6 +292,7 @@ struct GestureRecognizer {
         dwellRearm = true
         // The hand may have moved during the stall; settle a new neutral.
         neutral = nil
+        fistSince = nil
         // A trigger that is pausing or switching scroll mode, or just did, stays accounted for so the
         // stall can't flip it.
         if let held = active, map[held] == .pauseTracking || map[held] == .scrollMode { return [] }
@@ -519,8 +531,9 @@ struct GestureRecognizer {
     // MARK: Scroll mode
 
     /// The relaxed hand is a lever: knuckles above neutral scroll down the page, below it scroll
-    /// up, faster the farther they go. Only the switch trigger is watched; every other shape the
-    /// fingers make while rocking does nothing.
+    /// up, faster the farther they go. Only the switch trigger is watched, plus a fist held for
+    /// `fistExitHold` as the way out when the cross won't read; every other shape the fingers make
+    /// while rocking does nothing.
     private mutating func scrollModeUpdate(primary: HandPose, other: HandPose?, at time: TimeInterval) -> Output {
         mode = .scrollMode
         dwellAnchor = nil
@@ -552,6 +565,20 @@ struct GestureRecognizer {
             // Making the switch gesture shouldn't scroll.
             forming = true
         }
+        // A fist bound to scroll mode is a switch, handled above; any other fist held for a moment
+        // leaves too, and carries on as whatever it's bound to without having to open first. It
+        // must open before anything else can start, like the switch trigger. Closing the hand tips
+        // the knuckles a little, so the lever waits while the fist forms.
+        if primary.isFist, map[.fist] != .scrollMode {
+            let since = fistSince ?? time
+            fistSince = since
+            if time - since >= config.fistExitHold {
+                active = .fist
+                return scrollModeLeft(actions: actions)
+            }
+            return output(.scrollMode, pointer: nil, actions: actions, label: "Scroll mode: hold the fist to leave")
+        }
+        fistSince = nil
         guard switchHeld == nil, !forming, let knuckles = primary.knuckleCenter else {
             return output(.scrollMode, pointer: nil, actions: actions, label: "Scroll mode: let go, then rest your hand")
         }
@@ -593,6 +620,7 @@ struct GestureRecognizer {
         inScrollMode = false
         switchHeld = nil
         neutral = nil
+        fistSince = nil
         events.append(.scrollModeOff)
     }
 
@@ -895,7 +923,8 @@ struct GestureRecognizer {
     /// Whether a pinch has held `pinchHold`, or a shape its own hold. Other triggers don't wait.
     private func heldLongEnough(_ trigger: Trigger, at time: TimeInterval) -> Bool {
         if trigger == .crossedFingers {
-            return crossedSince.map { time - $0 - crossDropped >= config.crossHold } ?? false
+            let hold = inScrollMode ? config.crossExitHold : config.crossHold
+            return crossedSince.map { time - $0 - crossDropped >= hold } ?? false
         }
         if trigger == .indexPoint {
             return pointingSince.map { time - $0 >= config.pointHold } ?? false
@@ -1044,6 +1073,7 @@ struct GestureRecognizer {
         pointingSince = nil
         // switchHeld survives: a hand that comes back still crossed mustn't switch straight back out.
         neutral = nil
+        fistSince = nil
         mode = .idle
         return output(.idle, pointer: nil, actions: actions, label: isPaused ? "Paused" : Mode.idle.rawValue)
     }

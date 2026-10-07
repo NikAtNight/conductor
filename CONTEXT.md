@@ -80,6 +80,10 @@ _Avoid_: engine (that is the camera, clock, and publishing adapter around it), p
 One thing to post to macOS: a cursor move, a button, a key, a scroll, or a release of everything held.
 _Avoid_: event, CGEvent
 
+**Glide**:
+The cursor's movement between two of the pipeline's positions, spread over the frame that follows at a trackpad's rate, so a 30 fps camera doesn't show as 30 jumps a second.
+_Avoid_: interpolation, animation, easing
+
 **Scroll policy**:
 The rules that turn what a scroll trigger measured (palm travel, or the lever's offset from neutral) into wheel pixels. They set the lever's rate, keep a flick coasting, and decide what ends a coast.
 _Avoid_: momentum scroller, inertia
@@ -89,7 +93,7 @@ Scrolling at a rate set by how far the knuckles sit above or below neutral, with
 _Avoid_: rate control, joystick scrolling
 
 **Scroll mode**:
-A state, switched on and off by a trigger bound to it, in which the relaxed hand works the scroll lever and no other trigger fires.
+A state, switched on and off by a trigger bound to it, in which the relaxed hand works the scroll lever and no other trigger fires. A fist held for a moment also switches it off, for when the switch trigger won't read.
 _Avoid_: command mode, scroll lock
 
 **Neutral**:

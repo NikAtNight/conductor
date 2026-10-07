@@ -17,7 +17,7 @@ on-device. No video leaves the machine, and there is no Python, no model downloa
 | Closed fist, hold above or below | Scroll, the same way |
 | Both hands pinched, spread or squeeze | Zoom (cmd+scroll, or cmd +/- keys) |
 | Index and middle up, flick sideways | Swipe: back (⌘[) or forward (⌘]) |
-| Index and middle crossed, held briefly | Scroll mode on or off (off by default, see below) |
+| Index and middle crossed, held briefly | Scroll mode on or off (off by default, see below); a fist held a moment also turns it off |
 | Point with your index finger, thumb out, held briefly | Switch display: the screen you point at |
 | ⌃⌥⌘H | Turn tracking on or off from anywhere |
 
@@ -33,6 +33,11 @@ The cursor follows your index knuckle. Pinching, raising two fingers, and making
 move your fingertips but not the knuckle, so none of them drag the cursor and clicks land where you
 aimed. At pinch start the cursor also freezes until your hand moves a little, which stops a click
 turning into a tiny accidental drag.
+
+The camera delivers about 30 frames a second, and a cursor that jumped to each one read as 30
+hops a second. Instead the cursor glides from where it is to each new position over the frame that
+follows, 120 updates a second, the rate a trackpad reports at. It arrives on each position just as
+the next one comes in, so the cost is about a frame of lag at the end of a move.
 
 ### Scrolling
 
@@ -84,10 +89,15 @@ binds crossed index and middle fingers to it.
 2. Uncross them and rest your hand wherever it's comfortable. After a moment, that spot is neutral.
 3. Knuckles above neutral scroll down the page, below it scroll up. Farther from neutral is faster.
    Near neutral nothing scrolls. The ring shows an arrow for the direction, or a bar at rest.
-4. Cross your fingers again to go back to pointing.
+4. Cross your fingers again to go back to pointing. Leaving takes a shorter hold than entering
+   (0.15 s against 0.3 s): the finger underneath hides its tip and Vision finds it on about half the
+   frames of a real cross, which at the full hold left scroll mode stuck after crosses of over half a
+   second. Switching out by mistake only brings the pointer back.
+5. If the cross won't read, close your hand into a fist and hold it for a fifth of a second. That
+   leaves scroll mode too, and the fist carries on as a fist from there, scrolling by default.
 
-While scroll mode is on, the cursor holds still and pinches, fists, swipes, and pause do nothing, so
-fingers curling as you rock your hand can't click. Like pause, scroll mode is shared by every app
+While scroll mode is on, the cursor holds still and pinches, swipes, pause, and a brief fist do
+nothing, so fingers curling as you rock your hand can't click. Like pause, scroll mode is shared by every app
 profile. Crossing straight out of the two-finger pose can scroll a few pixels before the cross counts,
 and uncrossing back into it scrolls as usual. Losing the hand for a moment keeps scroll mode and sets a new
 neutral when it comes back. Gone for 1.5 seconds, you're back to pointing.
