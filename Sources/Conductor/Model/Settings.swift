@@ -39,7 +39,10 @@ struct Settings: Codable, Equatable, Sendable {
     var powerSaving = true
     /// A box measured by calibration, in Vision space. Overrides the automatic layout when set.
     var calibratedBox: CGRect?
-    var pinchDeadZone = 0.012
+    /// Frame units the hand may move with a click held before it becomes a drag. Nikhil's hand
+    /// drifted up to 0.033 over a firm pinch held one to three seconds in recorded logs, and at
+    /// 0.012 those clicks dragged. Deliberate drags passed 0.04 within a quarter second.
+    var pinchDeadZone = 0.035
     var dwellRadius = 0.015
     /// Per-app gesture maps, keyed by bundle identifier.
     var appProfiles: [String: AppProfile] = [:]

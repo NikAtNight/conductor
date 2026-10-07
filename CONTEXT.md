@@ -45,7 +45,7 @@ A state in which input is suppressed while the camera keeps running, entered and
 _Avoid_: stop (that is the camera turning off), tracking off
 
 **Control box**:
-The part of the camera frame that maps onto the screen. Automatic from screen layout and camera position, or measured by calibration.
+The part of the camera frame that maps onto the screen. Automatic from screen layout, camera position, and how big the hand looks (how far away the user sits), or measured by calibration.
 _Avoid_: active area, region of interest
 
 **Calibration**:

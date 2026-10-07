@@ -31,13 +31,24 @@ and its bindings apply while it's in front.
 
 The cursor follows your index knuckle. Pinching, raising two fingers, and making a fist all
 move your fingertips but not the knuckle, so none of them drag the cursor and clicks land where you
-aimed. At pinch start the cursor also freezes until your hand moves a little, which stops a click
-turning into a tiny accidental drag.
+aimed. At pinch start the cursor also holds still until your hand moves about 3.5% of the frame
+(Settings > Tracking > Click dead zone), which stops a click turning into an accidental drag. A
+firm pinch held for a second or more drifted up to 3.3% in recorded logs, and at the old 1.2% those
+clicks dragged. The cursor holds where it was when the button went down, not where the smoothing
+was still heading, which used to creep it on by 10 to 12 px after the press. Past the dead zone
+the drag starts from the held spot.
+
+A click also lets go once your thumb and finger have opened past the pinch threshold for 0.15 s,
+even short of the release distance, as long as you haven't started dragging. Fingers often come to
+rest just short of the release after a click, and the button stayed down while the hand drifted.
+A drag keeps the full release, so loosening the pinch mid-drag doesn't drop what it carries.
 
 The camera delivers about 30 frames a second, and a cursor that jumped to each one read as 30
 hops a second. Instead the cursor glides from where it is to each new position over the frame that
 follows, 120 updates a second, the rate a trackpad reports at. It arrives on each position just as
-the next one comes in, so the cost is about a frame of lag at the end of a move.
+the next one comes in, so the cost is about a frame of lag at the end of a move. The smoothing loosens
+quickly once the hand moves, so it trails a moving hand by about 30 ms; a still hand is smoothed as
+hard as before.
 
 ### Scrolling
 
@@ -266,6 +277,12 @@ Side-by-side and stacked layouts both work. A few things keep them predictable:
   any other camera sits on top of the main display.
 - Match the shape of your screens. On by default. The box takes the shape of the area it maps to,
   so a tall stacked layout gets a tall box and up-down moves at the same speed as left-right.
+- Distance. Sit further back and your hand looks smaller, so a box that stayed the same part of
+  the frame would need a longer reach. The automatic box shrinks and grows with your open hand
+  instead, from half to one and a half times the Width setting, so the same hand movement crosses
+  the screen wherever you sit. It's measured when you take control, so it never changes size under
+  a hand that's using it. A box you calibrated or dragged stays as you set it; Use automatic gets
+  the sizing back.
 - Gaps. Screens of different sizes leave corners that belong to no display. A point that lands in
   one moves to the nearest edge of the nearest screen.
 

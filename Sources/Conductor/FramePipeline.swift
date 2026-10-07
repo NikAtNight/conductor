@@ -55,15 +55,36 @@ struct FramePipeline {
     private var cameraMount: (x: CGFloat, display: CGRect) = (0, .zero)
     private var inputAllowed = false
     private var wasIdle = true
-    private var lastPosted = CGPoint(x: -1, y: -1)
+    private var lastPosted: CGPoint?
     private var relativeCursor: CGPoint = .zero
+    /// Where the cursor stays while a click's dead zone pins the pointer (see step).
+    private var heldCursor: CGPoint?
+    /// For the rest of a drag: how far the held spot sat from where the smoothing had got to when
+    /// the hand left the dead zone, so the drag starts from the held spot instead of jumping.
+    private var dragShift = CGVector.zero
+    /// Hand scales from recent open-hand frames, for sizing the box to how far away the user sits.
+    private var openHandScales: [CGFloat] = []
+    /// The automatic box's size relative to the settings, from those scales; see measureReach.
+    private var reach: CGFloat = 1
     private var zoomAccumulator: CGFloat = 0
 
-    /// Speed coefficient for the One Euro filter in normalized units. At 8, a hand crossing the
-    /// frame in a second raises the cutoff by about 8 Hz; resting tremor (~0.1/s) adds under 1 Hz.
-    static let filterBeta = 8.0
+    /// Speed coefficient for the One Euro filter in normalized units. At 20, a hand crossing the
+    /// frame in a second raises the cutoff by about 20 Hz; resting tremor (~0.02/s) adds under
+    /// 0.5 Hz. Replaying Nikhil's logs, 8 trailed a moving hand by about 45 ms (75 ms at the 90th
+    /// percentile) and the cursor felt behind; 20 trails by about 30 ms (50 ms) and moves the cursor
+    /// about 30% more unevenly frame to frame while moving. A still hand barely changes.
+    static let filterBeta = 20.0
     /// Don't post moves smaller than this. Sub-pixel updates at 30 fps read as shimmer.
     static let minimumMovePixels: CGFloat = 2
+    /// Hand scale (wrist to index knuckle, frame units) at which the automatic box is the size the
+    /// settings say. Nikhil's hand measures about this at his usual distance. Sitting back makes the
+    /// hand look smaller, and a box that stayed the same fraction of the frame then needed a longer
+    /// reach: at 0.16 it was half as far again. The box shrinks and grows with the hand instead.
+    static let referenceHandScale: CGFloat = 0.24
+    /// How far the box may shrink or grow with distance.
+    static let reachRange: ClosedRange<CGFloat> = 0.5...1.5
+    /// Open-hand frames that measure the hand.
+    static let reachSamples = 15
     static let zoomPixelsPerFrame: CGFloat = 1500
     /// Hands must spread or close this far (normalized) to fire one cmd+= / cmd+- press.
     static let zoomKeyStep: CGFloat = 0.04
@@ -131,7 +152,9 @@ struct FramePipeline {
         relative.reset()
         precision.reset()
         wasIdle = true
-        lastPosted = CGPoint(x: -1, y: -1)
+        lastPosted = nil
+        heldCursor = nil
+        dragShift = .zero
     }
 
     // MARK: Frames
@@ -149,8 +172,10 @@ struct FramePipeline {
                 relayoutBox()
             }
         }
+        let reacquired = wasIdle && !hands.isEmpty
         let recognized = recognizer.update(hands: hands, at: time)
         wasIdle = recognized.mode == .idle
+        measureReach(hands, recognized: recognized, reacquired: reacquired)
         // Before the pointer maps, so this frame's cursor already lands on the new display.
         if inputAllowed {
             for case .switchDisplay(let direction) in recognized.actions { switchDisplay(toward: direction) }
@@ -163,7 +188,7 @@ struct FramePipeline {
             // per second and the filter opens all the way up, which is exactly the jitter it exists
             // to remove.
             let smoothed = filter.filter(pointer, at: time)
-            let target: CGPoint
+            var target: CGPoint
             if prefs.pointerMode == .relative {
                 if let delta = relative.delta(for: smoothed, at: time, screenWidth: screen.width) {
                     relativeCursor.x += delta.dx
@@ -178,8 +203,9 @@ struct FramePipeline {
                 let mapper = ScreenMapper(box: box, mirrored: prefs.mirrored, screen: screen)
                 target = DisplayLayout.snap(precision.position(for: smoothed, at: time, mapper: mapper), to: displays)
             }
+            target = holdForClick(target, recognized: recognized)
             cursor = target
-            if inputAllowed, target.distance(to: lastPosted) >= Self.minimumMovePixels {
+            if inputAllowed, lastPosted.map({ target.distance(to: $0) >= Self.minimumMovePixels }) ?? true {
                 commands.append(.move(target))
                 lastPosted = target
             }
@@ -200,6 +226,53 @@ struct FramePipeline {
             commands.append(.scroll(dy: dy, flags: []))
         }
         return Output(recognized: recognized, cursor: cursor, commands: commands)
+    }
+
+    /// The click dead zone, for the cursor. The recognizer pins the pointer when a button goes
+    /// down, but smoothing still trails the hand, so the cursor used to creep on toward it by 10 to
+    /// 12 px after the press and every click became a small drag. Instead the cursor holds where it
+    /// was last sent. If the hand then leaves the dead zone the drag carries on from there, shifted
+    /// by whatever the smoothing still owed. The frame the button comes up keeps the same rule, since
+    /// its move is posted before the release and would otherwise drag too.
+    private mutating func holdForClick(_ target: CGPoint, recognized: GestureRecognizer.Output) -> CGPoint {
+        let releasing = recognized.actions.contains { if case .leftUp = $0 { return true } else { return false } }
+        guard recognized.mode == .drag || releasing else {
+            heldCursor = nil
+            dragShift = .zero
+            return target
+        }
+        if recognized.pointerFrozen || (releasing && heldCursor != nil) {
+            let held = heldCursor ?? lastPosted ?? target
+            heldCursor = releasing ? nil : held
+            return held
+        }
+        if let held = heldCursor {
+            dragShift = CGVector(dx: held.x - target.x, dy: held.y - target.y)
+            heldCursor = nil
+        }
+        let shifted = DisplayLayout.snap(CGPoint(x: target.x + dragShift.dx, y: target.y + dragShift.dy), to: displays)
+        if releasing { dragShift = .zero }
+        return shifted
+    }
+
+    /// Sizes the automatic box to the user's distance from the camera, by how big the open hand
+    /// looks. Measured from recent open-hand frames, since a curled or tilted hand looks shorter,
+    /// and applied only when control is taken (or, without the ready pose, when the hand comes
+    /// back), so the box never changes size under a hand that's using it.
+    private mutating func measureReach(_ hands: [HandPose], recognized: GestureRecognizer.Output, reacquired: Bool) {
+        if let hand = GestureRecognizer.primaryHand(hands, prefer: prefs.mainHand), hand.isOpenHand, let scale = hand.scale {
+            openHandScales.append(scale)
+            if openHandScales.count > Self.reachSamples { openHandScales.removeFirst() }
+        }
+        let tookControl = recognized.events.contains(.tookControl) || (!prefs.requireReadyPose && reacquired)
+        guard tookControl, openHandScales.count >= Self.reachSamples / 3 else { return }
+        let median = openHandScales.sorted()[openHandScales.count / 2]
+        let next = (median / Self.referenceHandScale).clamped(to: Self.reachRange)
+        guard next != reach else { return }
+        reach = next
+        relayoutBox()
+        // The next absolute sample lands where the hand maps in the resized box.
+        precision.reset()
     }
 
     private mutating func commands(for action: GestureRecognizer.Action) -> [InputCommand] {
@@ -305,7 +378,7 @@ struct FramePipeline {
         // and centred no matter which display is picked.
         let looking = lookPicker != nil
         box = ControlBox.layout(ControlBox.Input(
-            width: prefs.boxWidth, height: prefs.boxHeight, offsetY: prefs.boxOffsetY,
+            width: prefs.boxWidth * reach, height: prefs.boxHeight * reach, offsetY: prefs.boxOffsetY,
             matchShape: prefs.matchScreenShape, target: screen,
             cameraX: looking ? screen.midX : cameraMount.x,
             cameraDisplay: looking ? screen : cameraMount.display))

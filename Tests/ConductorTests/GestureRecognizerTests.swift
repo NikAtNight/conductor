@@ -60,6 +60,46 @@ final class GestureRecognizerTests: XCTestCase {
         XCTAssertTrue(out.actions.isEmpty)
     }
 
+    /// The pinch with the thumb and index this far apart in hand scales, at `x`.
+    private func pinched(apart distance: CGFloat, x: CGFloat = 0.5) -> HandPose {
+        var hand = PoseFixtures.openHand(at: CGPoint(x: x, y: 0.3))
+        let index = hand[.indexTip]!
+        hand.joints[.thumbTip] = CGPoint(x: index.x - distance * hand.scale!, y: index.y)
+        return hand
+    }
+
+    /// Nikhil's fingers often came to rest about 0.4 apart after a click, short of the 0.55
+    /// release, and the button stayed down for a second while the hand drifted.
+    func testAClickLeftHalfOpenLetsGoWithoutDragging() {
+        var r = GestureRecognizer(config: .instant)
+        var t = 0.0
+        var actions: [Action] = []
+        func frame(_ hand: HandPose, count: Int = 1) {
+            for _ in 0..<count { actions += r.update(hands: [hand], at: t).actions; t += dt }
+        }
+        frame(PoseFixtures.pinched(), count: 3)
+        frame(pinched(apart: 0.4), count: 3)
+        XCTAssertEqual(actions, [.leftDown(clickCount: 1)], "a brief loosening is still held")
+        frame(pinched(apart: 0.4), count: 3)
+        XCTAssertEqual(actions, [.leftDown(clickCount: 1), .leftUp(clickCount: 1)])
+        // Closing again from half open doesn't click again: the fingers have to open first.
+        frame(PoseFixtures.pinched(), count: 5)
+        XCTAssertEqual(actions.count, 2)
+    }
+
+    func testADragKeepsTheFullReleaseWhenThePinchLoosens() {
+        var r = GestureRecognizer(config: .instant)
+        var t = 0.0
+        var actions: [Action] = []
+        func frame(_ hand: HandPose) { actions += r.update(hands: [hand], at: t).actions; t += dt }
+        frame(PoseFixtures.pinched())
+        for i in 1...6 { frame(pinched(apart: 0.1, x: 0.5 + 0.01 * CGFloat(i))) } // dragging
+        for i in 1...10 { frame(pinched(apart: 0.45, x: 0.56 + 0.005 * CGFloat(i))) }
+        XCTAssertEqual(actions, [.leftDown(clickCount: 1)], "a loose pinch mid-drag doesn't drop what it carries")
+        frame(PoseFixtures.openHand(at: CGPoint(x: 0.61, y: 0.3)))
+        XCTAssertEqual(actions, [.leftDown(clickCount: 1), .leftUp(clickCount: 1)])
+    }
+
     func testPointerFreezesAtPinchThenDragsWithoutJump() {
         var r = GestureRecognizer(config: .instant)
         let start = r.update(hands: [PoseFixtures.pinched()], at: 0).pointer!
@@ -67,11 +107,11 @@ final class GestureRecognizerTests: XCTestCase {
         let tremor = PoseFixtures.pinched(at: CGPoint(x: 0.503, y: 0.3))
         XCTAssertEqual(r.update(hands: [tremor], at: dt).pointer, start)
         // Real movement: first dragged frame lands exactly on the frozen point (offset absorbs the gap).
-        let moved = PoseFixtures.pinched(at: CGPoint(x: 0.53, y: 0.3))
+        let moved = PoseFixtures.pinched(at: CGPoint(x: 0.54, y: 0.3))
         let first = r.update(hands: [moved], at: 2 * dt).pointer!
         XCTAssertEqual(first.x, start.x, accuracy: 1e-9)
         // Then it follows the hand one-to-one.
-        let further = PoseFixtures.pinched(at: CGPoint(x: 0.56, y: 0.3))
+        let further = PoseFixtures.pinched(at: CGPoint(x: 0.57, y: 0.3))
         let second = r.update(hands: [further], at: 3 * dt).pointer!
         XCTAssertEqual(second.x - first.x, 0.03, accuracy: 1e-9)
     }

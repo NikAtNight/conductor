@@ -361,7 +361,11 @@ final class Engine: @unchecked Sendable {
         for command in commands {
             switch command {
             case .move(let point): aim(point)
-            case .leftDown(let count): input.leftDown(clickCount: count)
+            case .leftDown(let count):
+                // The button goes down where the cursor is now. Gliding on to the last target
+                // with the button held would be a drag.
+                stopGlide()
+                input.leftDown(clickCount: count)
             case .leftUp(let count): input.leftUp(clickCount: count)
             case .rightClick: input.rightClick()
             case .middleClick: input.middleClick()
@@ -377,8 +381,8 @@ final class Engine: @unchecked Sendable {
     /// Camera queue. The pipeline aims the cursor once per camera frame; the cursor gets there over
     /// the frame that follows, a tick at a time, so motion reads as motion and not as 30 hops a
     /// second. The glide starts from wherever the cursor really is, which also covers the mouse
-    /// having been touched meanwhile. A button posted in the same batch lands at the cursor's
-    /// current spot: a pinch freezes the pointer for longer than a glide takes, so that is the target.
+    /// having been touched meanwhile. A button going down stops the glide (see post), and the
+    /// pipeline holds the cursor while the click dead zone lasts, so a click doesn't drag.
     private func aim(_ target: CGPoint) {
         let current = CGEvent(source: nil)?.location ?? input.location
         glide.aim(at: target, from: current, at: CACurrentMediaTime())

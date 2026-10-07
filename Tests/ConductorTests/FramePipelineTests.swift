@@ -64,6 +64,42 @@ final class FramePipelineTests: XCTestCase {
         XCTAssertTrue(commands.contains(.leftUp(clickCount: 1)))
     }
 
+    /// Moves the open hand from x0 to x1 (Vision space, y 0.3) in `steps` frames.
+    private func sweep(from x0: CGFloat, to x1: CGFloat, steps: Int) {
+        for i in 0...steps {
+            frame([PoseFixtures.openHand(at: CGPoint(x: x0 + (x1 - x0) * CGFloat(i) / CGFloat(steps), y: 0.3))])
+        }
+    }
+
+    /// Nikhil's clicks in a recorded log: the knuckle stayed inside the dead zone, but the cursor
+    /// crept 10 to 12 px after the button went down while the smoothing caught up with the hand,
+    /// and every click became a small drag.
+    func testAPinchRightAfterAMoveClicksWithoutDragging() {
+        // His setup: a box about a quarter of the frame wide on the screen, and slow moves at 60%.
+        pipeline = makePipeline { $0.boxWidth = 0.25; $0.slowMoveSpeed = 0.6 }
+        // Slow aiming, about 0.1 frame widths a second, which is where smoothing trails furthest.
+        sweep(from: 0.42, to: 0.5, steps: 24)
+        frame([PoseFixtures.pinched(at: CGPoint(x: 0.5, y: 0.3))], count: 10)
+        frame([PoseFixtures.openHand(at: CGPoint(x: 0.5, y: 0.3))])
+        let down = try! XCTUnwrap(commands.firstIndex(of: .leftDown(clickCount: 1)))
+        let up = try! XCTUnwrap(commands.firstIndex(of: .leftUp(clickCount: 1)))
+        XCTAssertEqual(commands[down..<up].filter { if case .move = $0 { return true } else { return false } }, [],
+                       "the cursor holds still while the button is down")
+    }
+
+    func testADragStartsFromWhereTheCursorHeldWithoutAJump() {
+        // His setup: a box about a quarter of the frame wide on the screen, and slow moves at 60%.
+        pipeline = makePipeline { $0.boxWidth = 0.25; $0.slowMoveSpeed = 0.6 }
+        sweep(from: 0.42, to: 0.5, steps: 24)
+        frame([PoseFixtures.pinched(at: CGPoint(x: 0.5, y: 0.3))], count: 10)
+        let held = moves.last!
+        commands = []
+        for i in 1...10 { frame([PoseFixtures.pinched(at: CGPoint(x: 0.5 - 0.008 * CGFloat(i), y: 0.3))]) }
+        XCTAssertFalse(moves.isEmpty, "past the dead zone it drags")
+        XCTAssertLessThan(moves.first!.distance(to: held), 15, "the drag carries on from the held spot")
+        XCTAssertGreaterThan(moves.last!.x, held.x, "and follows the hand (mirrored: Vision's left is the user's right)")
+    }
+
     func testAFistHeldAboveWhereItClosedScrollsUntilItOpensAndNeverCoasts() {
         frame([PoseFixtures.openHand()])
         frame([PoseFixtures.fist()], count: 2)
@@ -317,6 +353,34 @@ final class FramePipelineTests: XCTestCase {
         XCTAssertNil(FramePipeline.display(from: top, toward: .right, in: all))
         XCTAssertEqual(FramePipeline.display(from: bottom, toward: .left, in: all), left, "more left than up from bottom")
         XCTAssertNil(FramePipeline.display(from: left, toward: .down, in: all), "bottom is more right than down from left")
+    }
+
+    /// The open hand as it looks from a different distance: every joint scaled about the wrist.
+    private func openHand(scale: CGFloat) -> HandPose {
+        var hand = PoseFixtures.openHand()
+        let wrist = hand[.wrist]!, k = scale / hand.scale!
+        hand.joints = hand.joints.mapValues { CGPoint(x: wrist.x + ($0.x - wrist.x) * k, y: wrist.y + ($0.y - wrist.y) * k) }
+        return hand
+    }
+
+    func testSittingFurtherBackShrinksTheBoxWhenControlIsTaken() {
+        pipeline = makePipeline(requireReadyPose: true)
+        let reference = FramePipeline.referenceHandScale
+        frame([openHand(scale: reference)], count: 30)
+        XCTAssertEqual(pipeline.box.width, 0.6, accuracy: 0.001, "at the usual distance the box is as the settings say")
+        // Sat back: the hand looks two-thirds the size. Nothing changes until control is taken again.
+        frame([openHand(scale: reference * 2 / 3)], count: 5)
+        XCTAssertEqual(pipeline.box.width, 0.6, accuracy: 0.001, "never resized under a hand that's using it")
+        frame([], count: 60)
+        frame([openHand(scale: reference * 2 / 3)], count: 30)
+        XCTAssertEqual(pipeline.box.width, 0.4, accuracy: 0.001, "the same reach covers the screen from further back")
+    }
+
+    func testACalibratedBoxIsLeftAsMeasured() {
+        let calibrated = CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5)
+        pipeline = makePipeline(requireReadyPose: true) { $0.calibratedBox = calibrated }
+        frame([openHand(scale: FramePipeline.referenceHandScale / 2)], count: 30)
+        XCTAssertEqual(pipeline.box.width, 0.5, accuracy: 0.001)
     }
 
     func testTheControlBoxFollowsTheSettings() {

@@ -7,7 +7,7 @@ final class PresetTests: XCTestCase {
         Preset.steady.apply(to: &s)
         XCTAssertTrue(s.dwellClick)
         XCTAssertLessThan(s.smoothing, 0.6)
-        XCTAssertGreaterThan(s.pinchDeadZone, 0.012)
+        XCTAssertGreaterThan(s.pinchDeadZone, Settings().pinchDeadZone)
         XCTAssertGreaterThan(s.pinchRelease - s.pinchEngage, 0.2)
     }
 

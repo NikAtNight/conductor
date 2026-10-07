@@ -82,6 +82,9 @@ struct GestureRecognizer {
         var feedback = Feedback()
         /// The trigger held or forming this frame, for the preview's gesture panel.
         var trigger: Trigger?
+        /// A button went down and the hand hasn't left the click dead zone yet, so `pointer` is
+        /// pinned where it was. The pipeline holds the cursor still for as long as this lasts.
+        var pointerFrozen = false
     }
 
     typealias MainHand = Settings.MainHand
@@ -104,6 +107,12 @@ struct GestureRecognizer {
         /// hand wins: reaching the thumb to the ring finger drags it past the middle finger, so the
         /// middle looks pinched too. The index never loses a tie.
         var pinchTieMargin: CGFloat = 0.06
+        /// Seconds a click may sit half open, its fingers back past `pinchEngage` but short of
+        /// `pinchRelease`, before it lets go, as long as the hand hasn't started a drag. After a
+        /// click Nikhil's fingers often rested 0.36 to 0.43 apart and stayed there, so the button
+        /// stayed down for up to a second and the hand's drift turned the click into a drag.
+        /// Drags in the same logs stayed under 0.3 for their whole hold.
+        var halfOpenRelease: TimeInterval = 0.15
         /// Frames a held middle, ring or little pinch may be kept by a neighbouring fingertip alone
         /// (see isEngaged). Vision's swaps last a frame or two; a hand that really opened
         /// shouldn't be held longer than this.
@@ -238,6 +247,10 @@ struct GestureRecognizer {
     private var openedFingers: Set<HandJoint> = Set(Trigger.pinches.compactMap(\.fingertip))
     /// Frames in a row that the held pinch's own fingertip has read as open (see isEngaged).
     private var neighbourFrames = 0
+    /// Since when a click has sat half open without dragging, and whether that's long enough to
+    /// let go (see trackHalfOpen).
+    private var halfOpenSince: TimeInterval?
+    private var clickOpened = false
     /// Index and middle crossed this frame (with hysteresis), and since when.
     private var crossed = false
     private var crossedSince: TimeInterval?
@@ -320,6 +333,7 @@ struct GestureRecognizer {
         lastSeen = time
         trackPinch(primary, at: time)
         trackNeighbourHold(primary)
+        trackHalfOpen(primary, at: time)
         trackCrossed(primary, at: time)
         trackPointing(primary, at: time)
         trackTwoFingerPose(primary)
@@ -467,7 +481,9 @@ struct GestureRecognizer {
         mode = Self.mode(for: action)
         let label = active.map { "\($0.title): \(map[$0].title)" }
             ?? (pointIsForming ? "\(Trigger.indexPoint.title): hold…" : Mode.point.rawValue)
-        return output(mode, pointer: pointer, actions: actions, label: label, feedback: feedback)
+        var out = output(mode, pointer: pointer, actions: actions, label: label, feedback: feedback)
+        out.pointerFrozen = pointer != nil && frozenPointer != nil
+        return out
     }
 
     // MARK: Two fingers
@@ -773,6 +789,7 @@ struct GestureRecognizer {
         case .indexPinch, .middlePinch, .ringPinch, .littlePinch:
             // Only starting a pinch needs a clear view of the finger. A held one stays held.
             guard holding else { return canStart() }
+            if trigger == active, clickOpened { return false }
             if pinchDistance(primary, trigger.fingertip!) < config.pinchRelease { return true }
             // Vision swaps neighbouring fingertips on a hand with the thumb across it, which made
             // the ring distance jump open for a frame while the little finger read as pinched. A
@@ -792,6 +809,21 @@ struct GestureRecognizer {
             return
         }
         neighbourFrames += 1
+    }
+
+    /// Notes how long the click held now has sat half open: fingers past `pinchEngage` while the
+    /// pointer is still pinned in the click dead zone. Runs every frame with a hand, before the
+    /// hold is checked. A drag (the pointer has left the dead zone) keeps the full release.
+    private mutating func trackHalfOpen(_ hand: HandPose, at time: TimeInterval) {
+        guard let active, let tip = active.fingertip, frozenPointer != nil,
+              pinchDistance(hand, tip) >= config.pinchEngage else {
+            halfOpenSince = nil
+            clickOpened = false
+            return
+        }
+        let since = halfOpenSince ?? time
+        halfOpenSince = since
+        clickOpened = time - since >= config.halfOpenRelease
     }
 
     private static let neighbours: [Trigger: [Trigger]] = [
@@ -985,6 +1017,8 @@ struct GestureRecognizer {
         lastSpread = nil
         openedFingers.removeAll()
         neighbourFrames = 0
+        halfOpenSince = nil
+        clickOpened = false
         switch map[trigger] {
         case .leftButton:
             lastLeftUpTime = asClick ? time : -1

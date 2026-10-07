@@ -33,14 +33,14 @@ enum Preset: String, CaseIterable, Identifiable {
             p.smoothing = 0.3
             p.setPinchEngage(0.3)
             p.setPinchRelease(0.6)
-            p.pinchDeadZone = 0.03
+            p.pinchDeadZone = 0.05
             p.dwellClick = true
             p.dwellTime = 1.0
             p.dwellRadius = 0.03
         case .large:
             p.setPinchEngage(0.45)
             p.setPinchRelease(0.7)
-            p.pinchDeadZone = 0.02
+            p.pinchDeadZone = 0.045
             p.dwellClick = true
             p.dwellTime = 1.0
             p.dwellRadius = 0.025
