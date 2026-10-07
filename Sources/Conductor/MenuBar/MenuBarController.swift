@@ -17,6 +17,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var handMap: HandMap?
     private var cues: Cues?
     private let lookCalibration = LookCalibrationController()
+    private let gestureCheck = GestureCheckController()
     private var cancellables: Set<AnyCancellable> = []
 
     private let toggleItem = NSMenuItem(title: "Start Tracking", action: #selector(toggleTracking), keyEquivalent: "t")
@@ -139,6 +140,27 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
     }
 
+    /// Opens the preview so you can see yourself, then walks every gesture for each hand and
+    /// reports how cleanly the current thresholds read them. The report is saved beside the
+    /// gesture logs; nothing is changed by it.
+    @objc func checkGestures() {
+        showPreview()
+        var config = GestureRecognizer.Config()
+        config.pinchEngage = preferences.pinchEngage
+        config.pinchRelease = preferences.pinchRelease
+        gestureCheck.start(engine: engine, config: config) { report in
+            guard let report else { return }
+            do {
+                _ = try GestureCheck.save(report)
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "Couldn't save the gesture check"
+                alert.informativeText = "\(error)"
+                alert.runModal()
+            }
+        }
+    }
+
     /// How to switch screens by hand with the user's current bindings.
     private static func switchHint(_ map: GestureMap) -> String {
         guard let trigger = Trigger.allCases.first(where: { map[$0] == .switchDisplay }) else {
@@ -180,6 +202,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let calibrateLook = NSMenuItem(title: "Calibrate Look…", action: #selector(calibrateLook), keyEquivalent: "")
         calibrateLook.target = self
         menu.addItem(calibrateLook)
+        let checkGestures = NSMenuItem(title: "Check Gestures…", action: #selector(checkGestures), keyEquivalent: "")
+        checkGestures.target = self
+        menu.addItem(checkGestures)
         let setup = NSMenuItem(title: "Setup Assistant…", action: #selector(showSetup), keyEquivalent: "")
         setup.target = self
         menu.addItem(setup)

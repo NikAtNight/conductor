@@ -136,6 +136,29 @@ final class GestureRecognizerTests: XCTestCase {
         XCTAssertEqual(delta, 0.1, accuracy: 1e-9)
     }
 
+    func testTwoFistsWithTheThumbOnTheIndexStillZoom() {
+        // Pinching both hands curls the other fingers in and the thumb sits beside the curled index:
+        // 0.4 to 0.5 scales from its tip in recorded logs, which a one-hand pinch wouldn't take.
+        func pinchedFist(at wrist: CGPoint, chirality: Chirality) -> HandPose {
+            var hand = PoseFixtures.fist(at: wrist)
+            let index = hand[.indexTip]!
+            hand.joints[.thumbTip] = CGPoint(x: index.x - 0.45 * hand.scale!, y: index.y)
+            hand.chirality = chirality
+            return hand
+        }
+        var r = GestureRecognizer(config: .instant)
+        let right = pinchedFist(at: CGPoint(x: 0.3, y: 0.3), chirality: .right)
+        let left = pinchedFist(at: CGPoint(x: 0.7, y: 0.3), chirality: .left)
+        XCTAssertEqual(right.normalizedDistance(.thumbTip, .indexTip)!, 0.45, accuracy: 0.001)
+        XCTAssertTrue(right.isFist)
+        _ = run([[right, left]], recognizer: &r)
+        XCTAssertEqual(r.mode, .zoom, "both hands beat the fist")
+        // One hand alone with that thumb is a fist, not a pinch.
+        var alone = GestureRecognizer(config: .instant)
+        _ = run([[right]], recognizer: &alone)
+        XCTAssertEqual(alone.mode, .scroll)
+    }
+
     func testZoomDoesNotArmDoubleClick() {
         var r = GestureRecognizer(config: .instant)
         var left = PoseFixtures.pinched(at: CGPoint(x: 0.3, y: 0.3))
@@ -184,6 +207,34 @@ final class PinchRobustnessTests: XCTestCase {
 
     private func run(_ r: inout GestureRecognizer, _ hands: [HandPose], from frame: Int, count: Int) -> [Action] {
         (frame..<(frame + count)).flatMap { r.update(hands: hands, at: Double($0) * dt).actions }
+    }
+
+    func testFoldedThumbCannotStartAPinchWhileTwoFingersAreBeingConfirmed() {
+        var map = GestureMap.standard
+        map[.ringPinch] = .holdKey(rightCommand)
+        var r = GestureRecognizer(map: map)
+        var hand = PoseFixtures.twoFingers()
+        hand.joints[.thumbTip] = hand[.ringTip]
+        // The thumb arrives first, one frame before the little finger finishes curling.
+        var forming = hand
+        forming.joints[.littleTip] = PoseFixtures.openHand()[.littleTip]
+        _ = r.update(hands: [PoseFixtures.openHand()], at: 0)
+        _ = r.update(hands: [forming], at: dt)
+        let outputs = (2...15).map { frame in
+            r.update(hands: [hand], at: Double(frame) * dt)
+        }
+        XCTAssertFalse(outputs.flatMap(\.actions).contains(.keyDown(rightCommand)))
+        XCTAssertEqual(outputs.last?.trigger, .twoFingers)
+    }
+
+    func testAnUnboundTwoFingerPoseDoesNotBlockRingPinch() {
+        var map = GestureMap.standard
+        map[.ringPinch] = .holdKey(rightCommand)
+        for trigger in [Trigger.twoFingers, .swipeLeft, .swipeRight] { map[trigger] = .none }
+        var r = GestureRecognizer(map: map)
+        var hand = PoseFixtures.twoFingers()
+        hand.joints[.thumbTip] = hand[.ringTip]
+        XCTAssertEqual(run(&r, [hand], from: 0, count: 10), [.keyDown(rightCommand)])
     }
 
     func testOpeningAFistPastTheThumbDoesNotClick() {

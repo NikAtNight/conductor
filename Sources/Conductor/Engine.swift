@@ -28,8 +28,8 @@ final class Engine: @unchecked Sendable {
     private var calibrationEnd: CFTimeInterval?
     private var calibrationSamples: [CGPoint] = []
     private var onCalibrated: ((CGRect?) -> Void)?
-    /// Set while look calibration samples the face; see startLookSampling.
-    private var onFace: (@MainActor (FacePose?) -> Void)?
+    /// Set while a calibration takes the frames instead of the recognizer; see startSampling.
+    private var sampling: (handler: @MainActor ([HandPose], FacePose?) -> Void, wantsFace: Bool, label: String)?
     private var publishedBox: CGRect?
     /// The connected displays, for naming the one the control box targets.
     private var displayLayout: [DisplayInfo] = []
@@ -217,24 +217,37 @@ final class Engine: @unchecked Sendable {
     }
 
     /// Look calibration: starts the camera if needed, then hands every frame's face (or nil when
-    /// none is seen) to `handler` on the main actor until `stopLookSampling`. Hands are shown in
-    /// the preview but not acted on meanwhile. Returns false if the camera couldn't start.
+    /// none is seen) to `handler` on the main actor until `stopSampling`. Hands are shown in the
+    /// preview but not acted on meanwhile. Returns false if the camera couldn't start.
     @MainActor
     func startLookSampling(_ handler: @escaping @MainActor (FacePose?) -> Void) async -> Bool {
+        await startSampling(label: "Calibrating look", face: true) { _, face in handler(face) }
+    }
+
+    /// The gesture check: like look sampling, but hands every frame's hands to `handler` and
+    /// leaves the face alone.
+    @MainActor
+    func startHandSampling(_ handler: @escaping @MainActor ([HandPose]) -> Void) async -> Bool {
+        await startSampling(label: "Checking gestures", face: false) { hands, _ in handler(hands) }
+    }
+
+    @MainActor
+    private func startSampling(label: String, face: Bool,
+                               _ handler: @escaping @MainActor ([HandPose], FacePose?) -> Void) async -> Bool {
         if !state.isRunning { await start() }
         guard state.isRunning else { return false }
         camera.queue.async { [self] in
             post(pipeline.releaseHeld())
             lastHandTime = CACurrentMediaTime() // full frame rate while sampling
-            onFace = handler
+            sampling = (handler, face, label)
         }
         return true
     }
 
     @MainActor
-    func stopLookSampling() {
+    func stopSampling() {
         camera.queue.async { [self] in
-            onFace = nil
+            sampling = nil
             pipeline.reset()
         }
     }
@@ -246,23 +259,28 @@ final class Engine: @unchecked Sendable {
         camera.queue.async { [self] in gestureLog?.note(text) }
     }
 
-    /// One look-sampling frame. Returns true while sampling, so the caller skips gesture handling.
+    /// One sampling frame. Returns true while sampling, so the caller skips gesture handling.
     /// Logged like any other frame, so a calibration that goes wrong can be read back.
-    private func lookSamplingStep(_ buffer: CMSampleBuffer, hands: [HandPose], primary: HandPose?, fps: Double,
-                                  now: CFTimeInterval, sinceLastMs: Double?, detectMs: Double) -> Bool {
-        guard let onFace else { return false }
-        let faceStart = CACurrentMediaTime()
-        let face = faceTracker.detect(in: buffer)
-        let faceMs = (CACurrentMediaTime() - faceStart) * 1000
+    private func samplingStep(_ buffer: CMSampleBuffer, hands: [HandPose], primary: HandPose?, fps: Double,
+                              now: CFTimeInterval, sinceLastMs: Double?, detectMs: Double) -> Bool {
+        guard let sampling else { return false }
+        var face: FacePose?
+        var faceMs: Double?
+        if sampling.wantsFace {
+            let faceStart = CACurrentMediaTime()
+            face = faceTracker.detect(in: buffer)
+            faceMs = (CACurrentMediaTime() - faceStart) * 1000
+        }
         gestureLog?.write(time: Date(), fps: fps, hands: hands, primary: primary, face: face,
-                          output: GestureRecognizer.Output(mode: .idle, pointer: nil, actions: [], label: "Calibrating look"),
+                          output: GestureRecognizer.Output(mode: .idle, pointer: nil, actions: [], label: sampling.label),
                           cursor: nil, sinceLastMs: sinceLastMs, detectMs: detectMs, faceMs: faceMs,
                           processMs: (CACurrentMediaTime() - now) * 1000)
         Task { @MainActor in
             self.state.hands = hands
-            self.state.face = face
+            if sampling.wantsFace { self.state.face = face }
             self.state.fps = fps
-            onFace(face)
+            self.state.gestureLabel = sampling.label
+            sampling.handler(hands, face)
         }
         return true
     }
@@ -383,8 +401,8 @@ final class Engine: @unchecked Sendable {
         frameTimes.append(now)
         frameTimes.removeAll { now - $0 > 1 }
         if calibrationStep(hands: hands, now: now, fps: Double(frameTimes.count)) { return }
-        if lookSamplingStep(buffer, hands: hands, primary: primary, fps: Double(frameTimes.count), now: now,
-                            sinceLastMs: sinceLast.map { $0 * 1000 }, detectMs: detectMs) { return }
+        if samplingStep(buffer, hands: hands, primary: primary, fps: Double(frameTimes.count), now: now,
+                        sinceLastMs: sinceLast.map { $0 * 1000 }, detectMs: detectMs) { return }
         let fps = Double(frameTimes.count)
 
         // The face feeds the log and, in look mode, the display pick. Look mode alone detects it on

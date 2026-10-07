@@ -45,6 +45,55 @@ final class SwipeTests: XCTestCase {
         XCTAssertEqual(swipe(from: 0.35, to: 0.6, duration: 0.2, recognizer: &r), [.shortcut(forward)])
     }
 
+    func testAWristFlickOfSixHundredthsSwipes() {
+        var r = GestureRecognizer(config: .instant)
+        // Nikhil's flicks measured 0.04 to 0.066 of the frame in about 0.2 s, from a pose already
+        // held. At 0.12 none ever fired.
+        var actions: [GestureRecognizer.Action] = []
+        var t = 0.0
+        func frame(_ x: CGFloat) { actions += withoutScroll(r.update(hands: [PoseFixtures.twoFingers(at: CGPoint(x: x, y: 0.3))], at: t).actions); t += dt }
+        for _ in 0..<10 { frame(0.5) }
+        for i in 1...6 { frame(0.5 - 0.01 * CGFloat(i)) }
+        XCTAssertEqual(actions, [.shortcut(back)])
+    }
+
+    func testAShortHorizontalFlickSwipesButVerticalTravelDoesNot() {
+        for direction: CGFloat in [-1, 1] {
+            var r = GestureRecognizer(config: .instant)
+            XCTAssertEqual(swipe(from: 0.5, to: 0.5 + direction * 0.045, duration: 0.2, recognizer: &r),
+                           [.shortcut(direction < 0 ? back : forward)])
+        }
+        var r = GestureRecognizer(config: .instant)
+        var actions: [GestureRecognizer.Action] = []
+        for i in 0...12 {
+            let hand = PoseFixtures.twoFingers(at: CGPoint(x: 0.5 + CGFloat(i) * 0.005,
+                                                         y: 0.3 + CGFloat(i) * 0.015))
+            actions += withoutScroll(r.update(hands: [hand], at: Double(i) * dt).actions)
+        }
+        XCTAssertEqual(actions, [], "sideways drift during vertical scrolling must not swipe")
+    }
+
+    func testRestingInThePoseAllowsAnotherSwipeWithoutLoweringTheFingers() {
+        var r = GestureRecognizer(config: .instant)
+        var actions: [GestureRecognizer.Action] = []
+        var t = 0.0
+        func frame(_ x: CGFloat) {
+            actions += withoutScroll(r.update(hands: [PoseFixtures.twoFingers(at: CGPoint(x: x, y: 0.3))], at: t).actions)
+            t += dt
+        }
+        for _ in 0..<10 { frame(0.5) }
+        for i in 1...6 { frame(0.5 - 0.01 * CGFloat(i)) }
+        for _ in 0..<20 { frame(0.44) }
+        for i in 1...6 { frame(0.44 + 0.01 * CGFloat(i)) }
+        XCTAssertEqual(actions, [.shortcut(back), .shortcut(forward)])
+    }
+
+    func testSidewaysDriftWhileScrollingIsNotASwipe() {
+        var r = GestureRecognizer(config: .instant)
+        // Two-finger scrolling wandered sideways at most 0.027 in 0.3 s in recorded logs.
+        XCTAssertEqual(swipe(from: 0.5, to: 0.47, duration: 0.3, recognizer: &r), [])
+    }
+
     func testSlowDriftIsNotASwipe() {
         var r = GestureRecognizer(config: .instant)
         XCTAssertEqual(swipe(from: 0.35, to: 0.6, duration: 2.0, recognizer: &r), [])

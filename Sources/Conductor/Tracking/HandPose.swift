@@ -66,8 +66,10 @@ struct HandPose: Equatable {
     }
 
     /// Palm width over hand scale at or above which the palm faces the camera enough to read the
-    /// fingers' order. Face-on hands in recorded logs sit around 0.46; below 0.4 is the edge-on tenth.
-    static let facingCameraWidth: CGFloat = 0.4
+    /// fingers' order. Face-on hands in recorded logs sit around 0.46; below 0.35 is the edge-on
+    /// tenth. Nikhil's crossing hand sits at 0.35 to 0.43, and at 0.4 a third of his crosses
+    /// were thrown out.
+    static let facingCameraWidth: CGFloat = 0.35
 
     private static let fingerChains: [HandJoint: [HandJoint]] = [
         .indexTip: [.indexMCP, .indexPIP, .indexDIP, .indexTip],
@@ -96,18 +98,37 @@ struct HandPose: Equatable {
     }
 
     /// How far the index fingertip sits past the middle fingertip toward the little finger, in palm
-    /// widths: positive with the fingers crossed, negative side by side. Measured along the knuckle
-    /// line, so it works for either hand at any roll. Nil when either finger is curled, since curled
-    /// tips bunch up and swap places by accident, and when the palm is turned edge-on to the camera,
-    /// where the fingertips line up one behind the other and jitter across each other.
-    var fingerCross: CGFloat? {
+    /// widths: positive with the fingers crossed, whichever finger is on top, negative side by side.
+    /// Measured along the knuckle line, so it works for either hand at any roll. Nil when either
+    /// finger is curled, since curled tips bunch up and swap places by accident, and when the palm
+    /// is turned edge-on to the camera, where the fingertips line up one behind the other and
+    /// jitter across each other.
+    ///
+    /// The finger underneath often loses its tip to Vision altogether (the crossing finger hides
+    /// it), while its last joint is still found. Then the last joints stand in: they sit about
+    /// halfway from where the fingers cross to the tips, so their offset is doubled.
+    var fingerCross: CGFloat? { fingerCross(holding: false) }
+
+    /// Once a cross has started, the last joints can support it even if visible tips jitter apart.
+    /// They cannot start a cross while both tips are visible: ordinary touching fingers can put
+    /// these joints past each other too.
+    func fingerCross(holding: Bool) -> CGFloat? {
         guard let index = self[.indexMCP], let little = self[.littleMCP], let width = palmWidth, width > 0,
               let scale, width / scale >= Self.facingCameraWidth,
-              let indexTip = self[.indexTip], let middleTip = self[.middleTip],
               !isCurled(.indexTip, .indexPIP), !isCurled(.middleTip, .middlePIP) else { return nil }
         // Unit vector from the little knuckle toward the index knuckle.
         let ax = (index.x - little.x) / width, ay = (index.y - little.y) / width
-        return ((middleTip.x - indexTip.x) * ax + (middleTip.y - indexTip.y) * ay) / width
+        func offset(_ a: HandJoint, _ b: HandJoint) -> CGFloat? {
+            guard let pa = self[a], let pb = self[b] else { return nil }
+            return ((pb.x - pa.x) * ax + (pb.y - pa.y) * ay) / width
+        }
+        let lastJoints = offset(.indexDIP, .middleDIP).map { $0 * 2 }
+        if let tips = offset(.indexTip, .middleTip) {
+            // Readable tips back in their normal order release the cross. Otherwise a brief
+            // tip swap followed by overlapping last joints could latch it indefinitely.
+            return holding && tips >= 0 ? max(tips, lastJoints ?? -.infinity) : tips
+        }
+        return lastJoints
     }
 
     /// True when all four fingers are straight and the thumb is out and away from the index finger.
@@ -124,8 +145,14 @@ struct HandPose: Equatable {
         }
         guard let thumbOut = normalizedDistance(.thumbTip, .indexMCP),
               let thumbToIndex = normalizedDistance(.thumbTip, .indexTip) else { return false }
-        return thumbOut > 0.5 && thumbToIndex > 0.6
+        return thumbOut > Self.openHandThumbOut && thumbToIndex > 0.6
     }
+
+    /// Thumb tip to index knuckle, in hand scales, past which the thumb counts as out for the open
+    /// hand. Nikhil's flat hand measures a median of 0.43 (quarter of frames under 0.37); at 0.5
+    /// the ready pose passed one frame in five and taking control took up to 21 seconds. A pinch
+    /// is still ruled out by the thumb-to-index check.
+    static let openHandThumbOut: CGFloat = 0.4
 
     /// Index and middle straight, ring and little curled: the "peace sign" used for swipes.
     var isTwoFingerPose: Bool {

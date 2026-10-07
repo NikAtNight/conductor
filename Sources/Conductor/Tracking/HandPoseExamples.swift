@@ -41,10 +41,10 @@ enum HandPoseExamples {
     }
 
     /// Two fingers up with the index crossed over the middle: its tip lands on the little-finger
-    /// side of the middle tip.
+    /// side of the middle tip, about a third of a palm width past it like a real cross.
     static func crossed(at wrist: CGPoint = CGPoint(x: 0.5, y: 0.3)) -> HandPose {
         var hand = twoFingers(at: wrist)
-        hand.joints[.indexTip] = CGPoint(x: wrist.x + 0.012, y: wrist.y + 0.20)
+        hand.joints[.indexTip] = CGPoint(x: wrist.x + 0.02, y: wrist.y + 0.20)
         hand.joints[.middleTip] = CGPoint(x: wrist.x - 0.01, y: wrist.y + 0.215)
         return hand
     }

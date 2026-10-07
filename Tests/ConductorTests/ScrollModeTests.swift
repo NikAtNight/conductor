@@ -46,12 +46,70 @@ final class ScrollModeTests: XCTestCase {
     func testFingerCrossIsPositiveOnlyWhenCrossed() {
         XCTAssertLessThan(PoseFixtures.openHand().fingerCross!, 0)
         XCTAssertLessThan(PoseFixtures.twoFingers().fingerCross!, 0)
-        XCTAssertGreaterThan(PoseFixtures.crossed().fingerCross!, 0.2)
+        XCTAssertGreaterThan(PoseFixtures.crossed().fingerCross!, 0.3)
         XCTAssertNil(PoseFixtures.fist().fingerCross, "curled tips don't count")
         var edgeOn = PoseFixtures.crossed()
         // Little knuckle swung in behind the index knuckle: the palm is turned side-on.
         edgeOn.joints[.littleMCP] = CGPoint(x: 0.5, y: 0.39)
         XCTAssertNil(edgeOn.fingerCross, "edge-on fingers line up and can't be read")
+    }
+
+    func testACrossStillReadsWhenTheHiddenTipIsLost() {
+        // The finger underneath loses its tip to Vision; the last joints still show the cross.
+        var hidden = PoseFixtures.crossed()
+        let wrist = hidden[.wrist]!
+        hidden.joints[.indexTip] = nil
+        hidden.confidence[.indexTip] = nil
+        hidden.joints[.indexDIP] = CGPoint(x: wrist.x + 0.008, y: wrist.y + 0.17)
+        hidden.joints[.middleDIP] = CGPoint(x: wrist.x - 0.008, y: wrist.y + 0.185)
+        XCTAssertGreaterThan(hidden.fingerCross!, 0.2)
+        // Side by side with a tip lost reads uncrossed, not crossed.
+        var sideBySide = PoseFixtures.twoFingers()
+        sideBySide.joints[.indexTip] = nil
+        XCTAssertLessThan(sideBySide.fingerCross!, 0)
+        // Both last joints missing too: nothing to read.
+        hidden.joints[.indexDIP] = nil
+        XCTAssertNil(hidden.fingerCross)
+    }
+
+    func testLastJointsPreserveACrossWhenVisibleTipsJitterApart() {
+        var hand = PoseFixtures.crossed()
+        hand.joints[.indexDIP] = CGPoint(x: 0.508, y: 0.47)
+        hand.joints[.middleDIP] = CGPoint(x: 0.492, y: 0.485)
+        frame([hand], count: 4)
+        // Tips are present but nearly touching. The last joints still show the cross.
+        hand.joints[.indexTip] = CGPoint(x: 0.49, y: 0.50)
+        frame([hand], count: 10)
+        XCTAssertTrue(r.inScrollMode)
+        XCTAssertEqual(events, [.scrollModeOn])
+    }
+
+    func testLastJointsCannotStartACrossWithVisibleUncrossedTips() {
+        var hand = PoseFixtures.twoFingers()
+        hand.joints[.indexDIP] = CGPoint(x: 0.508, y: 0.47)
+        hand.joints[.middleDIP] = CGPoint(x: 0.492, y: 0.485)
+        frames(hand, for: 1)
+        XCTAssertFalse(r.inScrollMode)
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testSeparatedTipsReleaseACrossEvenWhenLastJointsStillOverlap() {
+        var uncrossed = PoseFixtures.twoFingers()
+        uncrossed.joints[.indexDIP] = CGPoint(x: 0.508, y: 0.47)
+        uncrossed.joints[.middleDIP] = CGPoint(x: 0.492, y: 0.485)
+        // A single erroneous crossed reading must not turn DIP overlap into a held cross.
+        frame([PoseFixtures.crossed()])
+        frames(uncrossed, for: 0.6)
+        XCTAssertFalse(r.inScrollMode)
+        XCTAssertTrue(events.isEmpty)
+
+        frames(PoseFixtures.crossed(), for: 0.4)
+        XCTAssertTrue(r.inScrollMode)
+        frames(uncrossed, for: 0.6)
+        XCTAssertEqual(last.label, "Scroll mode: at rest", "uncrossing releases the switch gesture")
+        frames(PoseFixtures.crossed(), for: 0.4)
+        XCTAssertFalse(r.inScrollMode)
+        XCTAssertEqual(events, [.scrollModeOn, .scrollModeOff])
     }
 
     func testCrossingBrieflyDoesNothing() {
@@ -131,6 +189,39 @@ final class ScrollModeTests: XCTestCase {
         XCTAssertEqual(last.mode, .point)
         XCTAssertNotNil(last.pointer)
         XCTAssertEqual(events, [.scrollModeOff])
+    }
+
+    func testAHeldCrossRidesOutAFewUnreadableFrames() {
+        enterScrollMode()
+        events.removeAll()
+        // Vision drops the occluded index tip for a frame or two mid-cross; the hold keeps counting.
+        frames(PoseFixtures.crossed(), for: 0.15)
+        frame([PoseFixtures.twoFingers()], count: r.config.crossDropFrames)
+        frames(PoseFixtures.crossed(), for: 0.2)
+        XCTAssertFalse(r.inScrollMode)
+        XCTAssertEqual(events, [.scrollModeOff])
+    }
+
+    func testRiddenOutFramesDoNotCountAsHolding() {
+        enterScrollMode()
+        events.removeAll()
+        // 0.27 s of crossed readings around three bad frames: not a hold yet, whatever the clock says.
+        frames(PoseFixtures.crossed(), for: 0.15)
+        frame([PoseFixtures.twoFingers()], count: r.config.crossDropFrames)
+        frames(PoseFixtures.crossed(), for: 0.12)
+        XCTAssertTrue(r.inScrollMode)
+        frames(PoseFixtures.crossed(), for: 0.1)
+        XCTAssertFalse(r.inScrollMode)
+    }
+
+    func testUncrossingForLongerStartsTheHoldOver() {
+        enterScrollMode()
+        events.removeAll()
+        frames(PoseFixtures.crossed(), for: 0.15)
+        frame([PoseFixtures.twoFingers()], count: r.config.crossDropFrames + 1)
+        frames(PoseFixtures.crossed(), for: 0.2)
+        XCTAssertTrue(r.inScrollMode, "0.15 s and 0.2 s with a real uncross between are two short holds")
+        XCTAssertEqual(events, [])
     }
 
     func testUnbindingTheSwitchLeavesScrollMode() {

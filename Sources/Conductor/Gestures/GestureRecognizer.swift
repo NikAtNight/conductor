@@ -129,9 +129,11 @@ struct GestureRecognizer {
         var dwellRadius: CGFloat = 0.015
         /// Matches ScreenMapper: with mirroring, moving your hand to your left is "left".
         var mirrored = true
-        /// A swipe is this much sideways palm travel (frame units) within `swipeWindow` seconds.
-        var swipeDistance: CGFloat = 0.12
-        var swipeWindow: TimeInterval = 0.3
+        /// Sideways knuckle travel in frame units within `swipeWindow`. The wrist stays almost
+        /// still during a flick, so including it in the average missed short wrist flicks.
+        /// Travel must also be mostly horizontal (see swipeTravel).
+        var swipeDistance: CGFloat = 0.035
+        var swipeWindow: TimeInterval = 0.25
         /// Seconds a pinch must hold before it engages, so a fingertip passing the thumb doesn't
         /// click. 0.06 is the third frame at 30 fps.
         var pinchHold: TimeInterval = 0.06
@@ -139,12 +141,23 @@ struct GestureRecognizer {
         /// the lens, the camera can't tell whether the fingertip touches the thumb.
         var minimumFingerLength: CGFloat = 0.5
         /// Index and middle count as crossed past this (see HandPose.fingerCross), and uncrossed
-        /// below `crossRelease`. With these and `crossHold`, replaying every recorded gesture log
-        /// (scroll demos, rocking the whole hand) never switches by accident.
-        var crossEngage: CGFloat = 0.2
-        var crossRelease: CGFloat = 0.1
+        /// below `crossRelease`. Deliberate crosses in recorded logs read 0.4 to 0.7; two fingers
+        /// held touching read up to 0.21, which at 0.2 switched scroll mode by accident.
+        var crossEngage: CGFloat = 0.3
+        var crossRelease: CGFloat = 0.15
         /// Seconds the fingers must stay crossed, so a hand passing through the shape doesn't fire.
         var crossHold: TimeInterval = 0.3
+        /// Frames in a row reading uncrossed, or unreadable, that a held cross rides out. Vision
+        /// drops the occluded index tip for a frame at a time while the fingers are crossed, and
+        /// in recorded logs that restarted the hold on six attempts out of seven. The ridden-out
+        /// frames don't count toward `crossHold`, so a borderline reading can't be padded into a switch.
+        var crossDropFrames = 3
+        /// Both hands' thumb-to-index distances must be under this to engage the two-hand pinch,
+        /// and one over `twoHandPinchRelease` lets it go. Looser than a one-hand pinch: pinching
+        /// both hands curls the other fingers into fists and the tips sit 0.4 to 0.5 apart in the
+        /// picture, and two pinched hands are not a shape anything else is mistaken for.
+        var twoHandPinchEngage: CGFloat = 0.5
+        var twoHandPinchRelease: CGFloat = 0.7
         /// Seconds the pointing sign (index out, thumb out, others curled) must hold before it fires.
         var pointHold: TimeInterval = 0.3
         /// Scroll mode: after the switch gesture is let go, the hand has this long to settle, and
@@ -195,9 +208,9 @@ struct GestureRecognizer {
     /// fingers shifts the thumb-index midpoint a little.
     private var dwellRearm = false
     private var events: [Event] = []
-    /// Recent palm x positions while in the two-finger pose, oldest first.
-    private var swipeTrail: [(time: TimeInterval, x: CGFloat)] = []
-    /// One swipe per pose: set after a swipe fires, cleared when the pose ends.
+    /// Recent knuckle positions while in the two-finger pose, oldest first.
+    private var swipeTrail: [(time: TimeInterval, point: CGPoint)] = []
+    /// Blocks the return stroke until the hand rests or the pose ends.
     private var swipeFired = false
     /// The two-finger pose, debounced (see trackTwoFingerPose).
     private var twoFingersHeld = false
@@ -214,6 +227,11 @@ struct GestureRecognizer {
     /// Index and middle crossed this frame (with hysteresis), and since when.
     private var crossed = false
     private var crossedSince: TimeInterval?
+    /// Frames in a row a held cross has read uncrossed or unreadable (see trackCrossed), the time
+    /// those frames have taken since the cross formed, and when the cross was last tracked.
+    private var uncrossedFrames = 0
+    private var crossDropped: TimeInterval = 0
+    private var lastCrossTime: TimeInterval?
     /// When the pointing sign formed with a readable direction, while it holds.
     private var pointingSince: TimeInterval?
     private(set) var inScrollMode = false
@@ -378,7 +396,12 @@ struct GestureRecognizer {
         if twoFingersHeld, active == nil || active == .twoFingers {
             return twoFingerUpdate(primary: primary, other: other, posed: primary.isTwoFingerPose, at: time)
         }
-        resetSwipe()
+        if twoFingerBound, primary.isTwoFingerPose, !crossIsForming, active == nil {
+            // Keep the start of a flick while the pose is being confirmed, but don't fire yet.
+            _ = detectSwipe(primary, at: time, canFire: false)
+        } else {
+            resetSwipe()
+        }
         var actions: [Action] = []
 
         // Does the current trigger still hold? Pinches release through hysteresis; the others are
@@ -587,14 +610,31 @@ struct GestureRecognizer {
 
     // MARK: Swipes
 
-    /// Tracks the palm while in the two-finger pose and reports a swipe once per pose.
-    private mutating func detectSwipe(_ hand: HandPose, at time: TimeInterval) -> Trigger? {
-        guard let x = hand.palmCenter?.x else { return nil }
-        swipeTrail.append((time, x))
-        swipeTrail.removeAll { time - $0.time > config.swipeWindow }
-        guard !swipeFired, let first = swipeTrail.first else { return nil }
+    /// Signed horizontal travel, rejecting vertical scrolling with a sideways component.
+    /// Shared with the gesture check so its flick readings use the same direction guard.
+    static func swipeTravel(from start: CGPoint, to end: CGPoint) -> CGFloat {
+        let dx = end.x - start.x, dy = end.y - start.y
+        return abs(dx) >= abs(dy) * 1.5 ? dx : 0
+    }
+
+    private mutating func detectSwipe(_ hand: HandPose, at time: TimeInterval, canFire: Bool = true) -> Trigger? {
+        guard let point = hand.knuckleCenter else { return nil }
+        swipeTrail.append((time, point))
+        swipeTrail.removeAll { time - $0.time > max(config.swipeWindow, 0.3) }
+        guard canFire, let first = swipeTrail.first else { return nil }
+        if swipeFired {
+            // A quarter second at rest rearms the gesture without lowering the fingers. A quick
+            // return stroke or a single bad pose frame must not produce another swipe.
+            if time - first.time >= 0.25,
+               swipeTrail.allSatisfy({ $0.point.distance(to: point) < 0.008 }) {
+                swipeFired = false
+                swipeTrail = [(time, point)]
+            }
+            return nil
+        }
         // Vision x grows to the camera's right. With mirroring that is the user's left.
-        let travel = (x - first.x) * (config.mirrored ? -1 : 1)
+        guard let start = swipeTrail.first(where: { time - $0.time <= config.swipeWindow }) else { return nil }
+        let travel = Self.swipeTravel(from: start.point, to: point) * (config.mirrored ? -1 : 1)
         guard abs(travel) >= config.swipeDistance else { return nil }
         swipeFired = true
         return travel < 0 ? .swipeLeft : .swipeRight
@@ -683,7 +723,8 @@ struct GestureRecognizer {
             return primary.isFist
         case .twoHandPinch:
             guard let other else { return false }
-            return pinchDistance(primary, .indexTip) < threshold && pinchDistance(other, .indexTip) < threshold
+            let bothUnder = holding ? config.twoHandPinchRelease : config.twoHandPinchEngage
+            return pinchDistance(primary, .indexTip) < bothUnder && pinchDistance(other, .indexTip) < bothUnder
         case .swipeLeft, .swipeRight:
             // Swipes are momentary; they can't be "held" and can't resume a pause.
             return false
@@ -751,6 +792,9 @@ struct GestureRecognizer {
     /// that on a tie (see `pinchTieMargin`) the finger further along the hand wins, unless the
     /// index is the nearest. Fingers that haven't opened since the last trigger don't count.
     private func closedPinch(_ hand: HandPose) -> Trigger? {
+        // Reserve the pose from its first frame. Waiting for its debounce lets a folded thumb
+        // start a ring pinch first, which then blocks scrolling for the rest of the hold.
+        if (hand.isTwoFingerPose || twoFingersHeld), twoFingerBound { return nil }
         let closed = Trigger.pinches
             .filter { map[$0] != .none && openedFingers.contains($0.fingertip!) && pinchCanStart(hand, $0.fingertip!) }
             .map { ($0, pinchDistance(hand, $0.fingertip!)) }
@@ -780,11 +824,28 @@ struct GestureRecognizer {
     /// trackPinch.
     private mutating func trackCrossed(_ hand: HandPose, at time: TimeInterval) {
         let threshold = crossed ? config.crossRelease : config.crossEngage
-        crossed = (hand.fingerCross ?? -.infinity) > threshold
+        let sinceLast = lastCrossTime.map { time - $0 } ?? 0
+        lastCrossTime = time
+        if (hand.fingerCross(holding: crossed) ?? -.infinity) > threshold {
+            crossed = true
+            uncrossedFrames = 0
+        } else if crossed {
+            // A held cross rides out a few frames of bad readings before it counts as uncrossed,
+            // but they don't count as holding.
+            uncrossedFrames += 1
+            if uncrossedFrames > config.crossDropFrames {
+                crossed = false
+                uncrossedFrames = 0
+            } else {
+                crossDropped += sinceLast
+            }
+        }
         if !crossed {
             crossedSince = nil
+            crossDropped = 0
         } else if crossedSince == nil {
             crossedSince = time
+            crossDropped = 0
         }
     }
 
@@ -822,14 +883,17 @@ struct GestureRecognizer {
     private mutating func trackTwoFingerPose(_ hand: HandPose) {
         let posed = hand.isTwoFingerPose && !crossIsForming
         if posed { posedFrames += 1; unposedFrames = 0 } else { unposedFrames += 1; posedFrames = 0 }
-        let bound = map[.twoFingers] != .none || Trigger.swipes.contains { map[$0] != .none }
-        twoFingersHeld = bound && (twoFingersHeld ? unposedFrames < Self.poseFrames : posedFrames >= Self.poseFrames)
+        twoFingersHeld = twoFingerBound && (twoFingersHeld ? unposedFrames < Self.poseFrames : posedFrames >= Self.poseFrames)
+    }
+
+    private var twoFingerBound: Bool {
+        map[.twoFingers] != .none || Trigger.swipes.contains { map[$0] != .none }
     }
 
     /// Whether a pinch has held `pinchHold`, or a shape its own hold. Other triggers don't wait.
     private func heldLongEnough(_ trigger: Trigger, at time: TimeInterval) -> Bool {
         if trigger == .crossedFingers {
-            return crossedSince.map { time - $0 >= config.crossHold } ?? false
+            return crossedSince.map { time - $0 - crossDropped >= config.crossHold } ?? false
         }
         if trigger == .indexPoint {
             return pointingSince.map { time - $0 >= config.pointHold } ?? false
@@ -981,6 +1045,9 @@ struct GestureRecognizer {
         dwellAnchor = nil
         crossed = false
         crossedSince = nil
+        uncrossedFrames = 0
+        crossDropped = 0
+        lastCrossTime = nil
         pointingSince = nil
         // switchHeld survives: a hand that comes back still crossed mustn't switch straight back out.
         neutral = nil

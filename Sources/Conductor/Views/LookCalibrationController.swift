@@ -45,7 +45,7 @@ final class LookCalibrationController {
                 return
             }
             guard !Task.isCancelled else {
-                engine.stopLookSampling() // cancelled while the camera was starting
+                engine.stopSampling() // cancelled while the camera was starting
                 return
             }
             open(shown)
@@ -96,7 +96,7 @@ final class LookCalibrationController {
         run = nil
         sampling = nil
         engine?.logNote("look calibration result: \(Self.describe(result))")
-        engine?.stopLookSampling()
+        engine?.stopSampling()
         engine = nil
         for window in windows { window.close() }
         windows = []

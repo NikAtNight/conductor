@@ -91,6 +91,24 @@ final class HandPoseTests: XCTestCase {
     }
 }
 
+final class OpenHandThumbTests: XCTestCase {
+    /// `openHand()` with the thumb tip placed `scales` hand scales from the index knuckle.
+    private func hand(thumbOut scales: CGFloat) -> HandPose {
+        var hand = PoseFixtures.openHand()
+        let knuckle = hand[.indexMCP]!, scale = hand.scale!
+        hand.joints[.thumbTip] = CGPoint(x: knuckle.x - scales * scale, y: knuckle.y)
+        return hand
+    }
+
+    func testTheThumbThresholdTakesNikhilsFlatHand() {
+        // His flat hand measured a median of 0.43 and a quarter of frames under 0.37; at 0.5 the
+        // ready pose passed one frame in five.
+        XCTAssertTrue(hand(thumbOut: 0.43).isOpenHand)
+        XCTAssertTrue(hand(thumbOut: 0.41).isOpenHand)
+        XCTAssertFalse(hand(thumbOut: 0.3).isOpenHand, "a thumb tucked against the hand")
+    }
+}
+
 final class PointingThumbTests: XCTestCase {
     /// `pointing()` with the thumb tip placed `scales` hand scales from the index knuckle.
     private func sign(thumbOut scales: CGFloat) -> HandPose {

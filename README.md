@@ -41,7 +41,14 @@ is neutral. Hold your hand above neutral to scroll down the page, below it to sc
 from neutral, the faster. Near neutral nothing moves. Open your hand and the page stops at once, and
 bringing your hand back to where it started scrolls nothing, so there's no return stroke to fight.
 The cursor ring turns purple with an arrow for the direction while you scroll. The cursor holds still
-in the two-finger pose, and a quick sideways flick in it swipes.
+in the two-finger pose, and a quick sideways flick in it swipes. Rest the hand briefly before the
+next flick; you can keep the two fingers raised. Vertical movement with a little sideways drift
+still scrolls.
+
+Your thumb can rest on the curled ring finger. Once the two-finger shape appears, it takes priority
+over starting a pinch, including while the pose is being confirmed. To make a separate ring pinch,
+leave the little finger extended so the shapes differ. A pinch already held keeps its binding until
+you release it.
 
 Settings > Tracking > Scroll by switches to the older style, Move your hand, where the page follows
 your hand like a trackpad and a flick coasts. It's less steady: the camera's frame-to-frame noise
@@ -90,9 +97,12 @@ picture, and so does tipping them back, so rocking from an upright hand only scr
 ways by rocking at the wrist, rest with the hand tipped forward a little when neutral is set. Pushing
 the hand toward the screen isn't measured.
 
-Crossed fingers only count with the palm roughly facing the camera. Turned edge-on, the fingertips
-line up behind each other and look crossed when they aren't. Replaying the recorded gesture logs with
-these settings never switches by accident.
+Either finger can be on top. Crossed fingers only count with the palm roughly facing the camera.
+Turned edge-on, the fingertips line up behind each other and look crossed when they aren't. The
+finger underneath often loses its tip to Vision while it's covered; then the last joints of the two
+fingers stand in. Those joints also help maintain an existing cross when visible fingertips jitter
+apart. A held cross rides out up to three bad frames, though those frames don't count toward the
+hold. Fingers that look curled or a palm turned edge-on still cannot start a cross.
 
 ## Control and accessibility
 
@@ -235,6 +245,28 @@ Settings > Camera picks the camera, or leaves it on Automatic. After a minute wi
 Conductor checks for one only a few times a second until a hand shows up again. If the picture is
 too dark or tracking keeps guessing, the preview and the menu say so.
 
+## Gesture check
+
+Check Gestures, in the menu bar menu, walks every gesture one hand at a time: the open hand, the
+four pinches, the fist, two fingers, crossed fingers, a two-finger flick, the pointing sign, then
+both hands pinched. For each it shows the sign, asks you to make it for a couple of seconds, then
+to rest, and reads the number the recognizer decides on (thumb to fingertip for a pinch, thumb out
+for the open hand and the pointing sign, how far the index sits past the middle for a cross, sideways knuckle
+travel in a quarter of a second for a flick) in both phases. The live line under the picture shows the
+reading and whether it counts right now, so you can see what the camera makes of your hand before
+the clock runs out. Skip this one moves on; closing the window cancels.
+
+At the end each gesture gets a verdict. Clear: read on nearly every frame made and never at rest.
+Weak: read most of the time, or rest comes within a few frames of firing. Refused: missed more than
+hit, or fired at rest, so the current threshold doesn't fit this hand. Where the made and rest
+readings don't overlap the line also gives their midpoint, which is where a threshold for this hand
+would sit. Nothing is applied: the report is saved as `gesture-check-<date>.json` beside the
+gesture logs, and each line is written to the gesture log if it's recording.
+
+Left and right are checked separately because Vision reports which hand it sees and the two differ.
+Readings are in hand scales, so sitting distance cancels out, but the camera angle and the light
+don't: run it again if you move the camera.
+
 ## Gesture log
 
 Menu bar > Record Gesture Log writes every camera frame to a new file in
@@ -269,6 +301,25 @@ It prints the displays, sample count, the logged outcome, and the refitted avera
 separation, and fails if the refit disagrees with what the app showed (angles are logged to a tenth
 of a degree, so the second decimal can differ).
 
+Any log can also be run back through the recognizer with the current thresholds, which is how a
+threshold change is checked against real hands before it ships. The ready pose is off for the
+replay so every gesture counts, and crossed fingers are bound to scroll mode:
+
+```sh
+CONDUCTOR_GESTURE_LOG=~/Library/Logs/Conductor/gestures-2026-10-06-181843.jsonl \
+  swift test --filter GestureLogReplayTests/testARealLogReplaysThroughTheRecognizer
+```
+
+It prints every click, swipe, key press/release, scroll-mode switch and display switch with the time
+and what the app showed on that frame, then the totals. Set `CONDUCTOR_GESTURE_MAP` to a file containing
+an encoded `GestureMap` to replay custom bindings too. In particular, the standard map leaves the
+ring pinch unbound, so it cannot reproduce conflicts with ring-finger push-to-talk.
+
+Replay runs the recognizer without posting input. Its ready-pose setting and map can differ from
+the recording, and recovering an earlier mode switch changes how later frames are interpreted.
+The logs contain joint positions but no labels for intended gestures, so action totals alone do
+not measure accuracy.
+
 ## Tuning
 
 Menu bar > Settings. Start with the control box: make it as small as you can while still aiming
@@ -289,6 +340,30 @@ swift test
 Gesture recognition, smoothing, and screen mapping are plain Swift with no camera dependency, so
 they are unit tested with synthesized hand poses in `Tests/ConductorTests`.
 
+The gesture path is `Engine` → `FramePipeline` → `GestureRecognizer.update` → input commands.
+`HandPose` supplies the geometry. Regression tests for the October 6 recordings are in
+`PinchRobustnessTests`, `SwipeTests`, and `ScrollModeTests`: a folded thumb must not start push-to-talk
+while two fingers are forming, short horizontal flicks must swipe without vertical drift doing so,
+and last-joint evidence may sustain a cross without starting one from uncrossed visible tips.
+`GestureCheck` shares the swipe direction calculation with the recognizer.
+
+Run those cases with:
+
+```sh
+swift test --filter 'PinchRobustnessTests|SwipeTests|ScrollModeTests|GestureCheckTests'
+```
+
+These tests and the log replay check recognition and emitted actions. Comfort, intended swipe
+direction, and camera tracking after a rebuild still need a live trial.
+
+Local verification on October 6, 2026, macOS arm64: `swift test` passed 286 tests with two optional
+log tests skipped. All 12 recordings with frame data replayed using the push-to-talk map; one empty
+recording was skipped. The signed release build passed signature verification. This was tested on
+base commit `37d1ac7` plus uncommitted changes. Local evidence is in `/tmp/conductor-tests-final.txt`,
+`/tmp/conductor-replay-final/`, and `/tmp/conductor-release-final.txt`; this turn's patch is
+`/tmp/conductor-2012-fixes.patch`. Replay outcomes still need interpretation against intended gestures.
+
+
 ```
 Sources/Conductor/
   Engine.swift   Camera queue, Vision, clock, stall watchdog, calibration, gesture log, posting
@@ -298,14 +373,15 @@ Sources/Conductor/
   Camera/        AVCaptureSession wrapper, camera choice, brightness/confidence checks
   Tracking/      Vision hand pose and face requests, the HandPose model (open hand, fist, two
                  fingers, the pointing sign), the FacePose model (head angles, eyes), the gesture
-                 log and the look calibration replay
+                 log and the replays of it (look calibration, hands)
   Gestures/      GestureMap, GestureRecognizer (control, pause, scroll lever and scroll mode, dwell,
                  swipes, pointing), ControlBox, ScreenMapper, calibration, One Euro filter, pointer
-                 helpers, ScrollPolicy, LookPicker
+                 helpers, ScrollPolicy, LookPicker, GestureCheck (per-hand gesture report)
   Control/       CGEvent posting (incl. held modifier keys), Accessibility check, global hotkey
   Feedback/      Cursor ring overlay, hand map, sounds and VoiceOver announcements
   MenuBar/       Status item and menu
-  Views/         Preview, toolbar-tab settings window, setup assistant, look calibration overlay
+  Views/         Preview, toolbar-tab settings window, setup assistant, look calibration overlay,
+                 gesture check window
   Model/         Preferences (UserDefaults), presets and app profiles, TrackingState (UI)
 ```
 

@@ -107,3 +107,7 @@ _Avoid_: overlay, HUD
 **Gesture log**:
 The opt-in per-frame record of hand poses, measurements, and what the pipeline did, for tuning.
 _Avoid_: telemetry, analytics
+
+**Gesture check**:
+Walking every trigger for each hand, made then rested, and scoring how cleanly the current threshold reads it: clear, weak, or refused. A report, not a calibration; it changes nothing.
+_Avoid_: gesture calibration (nothing is saved to settings), training
