@@ -65,5 +65,9 @@ cp "$ZIP" "$APPCAST_DIR/"
 cp "$APPCAST_DIR/appcast.xml" "$DIST/appcast.xml"
 rm -rf "$APPCAST_DIR"
 
+# The same zip under a fixed name, so the site's download link
+# (releases/latest/download/Conductor.zip) never needs a version in it.
+cp "$ZIP" "$DIST/Conductor.zip"
+
 shasum -a 256 "$ZIP"
-echo "Upload $ZIP and $DIST/appcast.xml to the release."
+echo "Upload $ZIP, $DIST/Conductor.zip and $DIST/appcast.xml to the release."

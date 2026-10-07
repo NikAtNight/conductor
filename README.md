@@ -180,12 +180,13 @@ it has no Info.plist with a camera usage string.
 
 `scripts/release.sh` builds a universal Conductor.app signed with the Developer ID certificate in
 your keychain, notarizes it when a notarytool keychain profile named `conductor-notary` exists,
-staples the ticket, zips it to `dist/Conductor-<version>.zip`, and writes the Sparkle appcast for
-it to `dist/appcast.xml`. It leaves /Applications alone. Both files go on the release:
+staples the ticket, zips it to `dist/Conductor-<version>.zip` (and a copy named `Conductor.zip`,
+which the site's download link fetches from the latest release), and writes the Sparkle appcast
+for it to `dist/appcast.xml`. It leaves /Applications alone. All three go on the release:
 
 ```sh
 VERSION=0.1.0 BUILD_NUMBER=1 scripts/release.sh
-gh release create v0.1.0 dist/Conductor-0.1.0.zip dist/appcast.xml --title "Conductor 0.1.0" --notes-file notes.md
+gh release create v0.1.0 dist/Conductor-0.1.0.zip dist/Conductor.zip dist/appcast.xml --title "Conductor 0.1.0" --notes-file notes.md
 ```
 
 The signed release checks `releases/latest/download/appcast.xml` once a day and installs an update
