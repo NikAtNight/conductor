@@ -6,3 +6,4 @@ Conductor.app/
 Conductor.app.previous/
 *.xcuserdatad
 AppIcon.icns
+dist/

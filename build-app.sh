@@ -8,10 +8,13 @@ cd "$(dirname "$0")"
 
 VERSION="${VERSION:-0.1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
-ARCH="$(uname -m)"
+# Space-separated. "arm64 x86_64" makes a universal binary; a release build does that.
+ARCHS="${ARCHS:-$(uname -m)}"
+ARCH_FLAGS=()
+for arch in $ARCHS; do ARCH_FLAGS+=(--arch "$arch"); done
 
-swift build -c release --arch "$ARCH"
-BIN_DIR="$(swift build -c release --arch "$ARCH" --show-bin-path)"
+swift build -c release "${ARCH_FLAGS[@]}"
+BIN_DIR="$(swift build -c release "${ARCH_FLAGS[@]}" --show-bin-path)"
 
 OUTPUT_APP="${APP_OUTPUT:-/Applications/Conductor.app}"
 # The last build is kept in the repo, not next to the output, so /Applications and Spotlight
@@ -66,7 +69,13 @@ IDENTITY="${CODE_SIGN_IDENTITY:-}"
 if [[ -z "$IDENTITY" ]] && security find-identity -v -p codesigning | grep -q '"Talix Dev Signing"'; then
   IDENTITY="Talix Dev Signing"
 fi
-codesign --force --sign "${IDENTITY:--}" "$APP"
+SIGN_FLAGS=(--force --sign "${IDENTITY:--}")
+if [[ "$IDENTITY" == "Developer ID Application"* ]]; then
+  # Notarization needs the hardened runtime and a secure timestamp, and the hardened runtime
+  # needs the camera entitlement before AVFoundation will open the camera.
+  SIGN_FLAGS+=(--options runtime --timestamp --entitlements Conductor.entitlements)
+fi
+codesign "${SIGN_FLAGS[@]}" "$APP"
 if [[ "${IDENTITY:--}" == "-" ]]; then
   echo "warning: ad-hoc signed; macOS will forget the Accessibility grant on the next rebuild" >&2
 fi
@@ -78,4 +87,4 @@ if [[ -e "$OUTPUT_APP" ]]; then
 fi
 mv "$APP" "$OUTPUT_APP"
 rmdir "$STAGING_DIR"
-echo "Built $OUTPUT_APP ($VERSION, build $BUILD_NUMBER)"
+echo "Built $OUTPUT_APP ($VERSION, build $BUILD_NUMBER, $ARCHS, signed by ${IDENTITY:-ad-hoc})"

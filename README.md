@@ -155,6 +155,26 @@ you can find the box without the preview. Clicks pass through it.
 The .app wrapper matters. AVFoundation refuses camera access to a bare `swift run` binary because
 it has no Info.plist with a camera usage string.
 
+### Releasing
+
+`scripts/release.sh` builds a universal Conductor.app signed with the Developer ID certificate in
+your keychain, notarizes it when a notarytool keychain profile named `conductor-notary` exists,
+staples the ticket, and zips it to `dist/Conductor-<version>.zip`. It leaves /Applications alone.
+
+```sh
+VERSION=0.1.0 BUILD_NUMBER=1 scripts/release.sh
+gh release create v0.1.0 dist/Conductor-0.1.0.zip --title "Conductor 0.1.0" --notes-file notes.md
+```
+
+Store the notarization profile once; it asks for an app-specific password from appleid.apple.com:
+
+```sh
+xcrun notarytool store-credentials conductor-notary --apple-id <apple id> --team-id <team id>
+```
+
+A release build carries a different signature from a dev build, so switching between them makes
+macOS forget the Accessibility grant (see Permissions).
+
 ### Permissions
 
 On first start macOS asks for two things:
