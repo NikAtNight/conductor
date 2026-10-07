@@ -24,6 +24,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let handMapItem = NSMenuItem(title: "Show Hand Map", action: #selector(toggleHandMap), keyEquivalent: "")
     private let gestureLogItem = NSMenuItem(title: "Record Gesture Log", action: #selector(toggleGestureLog), keyEquivalent: "")
+    private let uploadLogItem = NSMenuItem(title: "Upload Gesture Logs", action: #selector(toggleUploadLog), keyEquivalent: "")
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -51,6 +52,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         state.$isRunning
             .sink { [weak self] running in self?.updateIcon(running: running) }
             .store(in: &cancellables)
+
+        // Logs left from the last run (quit while recording, a failed upload) go now.
+        engine.uploadLogs()
 
         // Per-app profiles follow the frontmost app.
         engine.frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
@@ -149,6 +153,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             guard let report else { return }
             do {
                 _ = try GestureCheck.save(report)
+                self.engine.uploadLogs()
             } catch {
                 let alert = NSAlert()
                 alert.messageText = "Couldn't save the gesture check"
@@ -208,6 +213,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         gestureLogItem.target = self
         menu.addItem(gestureLogItem)
+        if engine.logUploader == nil {
+            // No action leaves it greyed out, the menu's own enabling at work.
+            uploadLogItem.title += " (no upload server in this build)"
+            uploadLogItem.action = nil
+        }
+        uploadLogItem.target = self
+        menu.addItem(uploadLogItem)
         let logs = NSMenuItem(title: "Show Gesture Logs", action: #selector(showGestureLogs), keyEquivalent: "")
         logs.target = self
         menu.addItem(logs)
@@ -222,6 +234,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         toggleItem.title = state.isRunning ? "Pause Tracking" : "Start Tracking"
         handMapItem.state = preferences.settings.showHandMap ? .on : .off
         gestureLogItem.state = preferences.settings.recordGestureLog ? .on : .off
+        uploadLogItem.state = preferences.settings.uploadGestureLog ? .on : .off
         if !state.isRunning {
             statusLine.title = "Tracking is off"
         } else if let problem = state.error ?? state.warning {
@@ -251,6 +264,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func toggleGestureLog() {
         preferences.settings.recordGestureLog.toggle()
+    }
+
+    @objc private func toggleUploadLog() {
+        preferences.settings.uploadGestureLog.toggle()
     }
 
     @objc private func showGestureLogs() {

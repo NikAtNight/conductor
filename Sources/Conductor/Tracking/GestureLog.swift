@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreGraphics
 import Foundation
 
@@ -68,6 +69,124 @@ final class GestureLog {
         var detectMs: Double
         var faceMs: Double?
         var processMs: Double
+        /// The tracking quality warning showing, if any (too dark, unsure).
+        var warning: String?
+        /// Set on frames taken at the power-saving rate, with no hand seen for a minute.
+        var idle: Bool?
+    }
+
+    /// What a recording was made on and with: the first line of every log, and again whenever any
+    /// of it changes. Needed to read the frames back, since an action in the log means nothing
+    /// without the thresholds that fired it. Product names, sizes and settings; nothing that names
+    /// the person or the hardware: per-app profiles are reduced to a count so the apps they use
+    /// stay private, and camera and display UUIDs give way to names.
+    struct Setup: Encodable, Equatable {
+        struct Display: Encodable, Equatable {
+            var name: String
+            /// Points, in the global layout (origin at the main display's top-left, y down).
+            var x: Double
+            var y: Double
+            var width: Double
+            var height: Double
+            /// Pixels per point; 2 on a Retina display.
+            var scale: Double
+            var builtin: Bool
+            var main: Bool
+        }
+
+        struct Camera: Encodable, Equatable {
+            var name: String
+            var model: String
+            var builtin: Bool
+            /// The camera's active format.
+            var width: Int
+            var height: Int
+            var maxFps: Double?
+        }
+
+        struct Placement: Encodable, Equatable {
+            var display: String
+            /// Along the display's width, 0 = left edge, 1 = right edge.
+            var x: Double
+        }
+
+        /// The random ID this install made for itself; see LogUploader.installID.
+        var install: String
+        var version: String?
+        var build: String?
+        var macOS: String
+        /// The Mac's model identifier, like Mac14,6.
+        var model: String
+        var arch: String
+        var displays: [Display]
+        var camera: Camera?
+        var placement: Placement?
+        var accessibility: Bool
+        var settings: Settings
+        var appProfiles: Int
+
+        /// Gathers the live values. Main thread, for NSScreen.
+        init(install: String, displays: [DisplayInfo], camera: AVCaptureDevice?, placement: (x: CGFloat, display: DisplayInfo)?,
+             accessibility: Bool, settings: Settings, bundle: [String: Any] = Bundle.main.infoDictionary ?? [:]) {
+            self.install = install
+            version = bundle["CFBundleShortVersionString"] as? String
+            build = bundle["CFBundleVersion"] as? String
+            macOS = ProcessInfo.processInfo.operatingSystemVersionString
+            model = Self.sysctl("hw.model")
+            #if arch(arm64)
+            arch = "arm64"
+            #else
+            arch = "x86_64"
+            #endif
+            self.displays = displays.map { d in
+                Display(name: d.name, x: d.bounds.minX, y: d.bounds.minY, width: d.bounds.width, height: d.bounds.height,
+                        scale: d.bounds.width > 0 ? (d.pixelSize.width / d.bounds.width).rounded() : 1,
+                        builtin: d.isBuiltin, main: d.isMain)
+            }
+            self.camera = camera.map { device in
+                let size = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+                let maxFps = device.activeFormat.videoSupportedFrameRateRanges.map(\.maxFrameRate).max()
+                return Camera(name: device.localizedName, model: device.modelID,
+                              builtin: device.deviceType == .builtInWideAngleCamera,
+                              width: Int(size.width), height: Int(size.height), maxFps: maxFps)
+            }
+            self.placement = placement.map { p in
+                Placement(display: p.display.name,
+                          x: p.display.bounds.width > 0 ? Double((p.x - p.display.bounds.minX) / p.display.bounds.width) : 0)
+            }
+            self.accessibility = accessibility
+            var settings = settings
+            appProfiles = settings.appProfiles.count
+            settings.appProfiles = [:]
+            // Camera and display UUIDs are hardware identifiers: they'd tie an install to the same
+            // Mac across a preferences wipe, which the random install ID is there to avoid. The
+            // names above say as much as the analysis needs.
+            settings.cameraDeviceID = nil
+            settings.cameraPlacement = nil
+            let names = Dictionary(displays.map { ($0.uuid, $0.name) }, uniquingKeysWith: { first, _ in first })
+            if var model = settings.lookModel {
+                for p in model.passes.indices {
+                    for t in model.passes[p].targets.indices {
+                        model.passes[p].targets[t].displayUUID = names[model.passes[p].targets[t].displayUUID] ?? "a display since unplugged"
+                    }
+                }
+                settings.lookModel = model
+            }
+            self.settings = settings
+        }
+
+        private static func sysctl(_ name: String) -> String {
+            var size = 0
+            guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else { return "" }
+            var buffer = [CChar](repeating: 0, count: size)
+            guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else { return "" }
+            return String(cString: buffer)
+        }
+    }
+
+    private struct SetupLine: Encodable {
+        var time: Double
+        var setup: Setup
     }
 
     /// Something that happened between frames.
@@ -107,7 +226,8 @@ final class GestureLog {
 
     func write(time: Date, fps: Double, hands: [HandPose], primary: HandPose?, face: FacePose? = nil,
                output: GestureRecognizer.Output, cursor: CGPoint?,
-               sinceLastMs: Double?, detectMs: Double, faceMs: Double? = nil, processMs: Double) {
+               sinceLastMs: Double?, detectMs: Double, faceMs: Double? = nil, processMs: Double,
+               warning: String? = nil, idle: Bool = false) {
         append(Frame(
             time: time.timeIntervalSince1970, fps: fps, mode: output.mode.rawValue, label: output.label,
             actions: output.actions.map { String(describing: $0) },
@@ -115,7 +235,11 @@ final class GestureLog {
             cursor: cursor.map { [Self.round($0.x, places: 1), Self.round($0.y, places: 1)] },
             sinceLastMs: sinceLastMs.map { Self.round($0, places: 1) },
             detectMs: Self.round(detectMs, places: 1), faceMs: faceMs.map { Self.round($0, places: 1) },
-            processMs: Self.round(processMs, places: 1)))
+            processMs: Self.round(processMs, places: 1), warning: warning, idle: idle ? true : nil))
+    }
+
+    func setup(_ setup: Setup) {
+        append(SetupLine(time: Date().timeIntervalSince1970, setup: setup))
     }
 
     func note(_ event: String) {

@@ -8,6 +8,8 @@ struct DisplayInfo: Equatable {
     var bounds: CGRect
     var isBuiltin: Bool
     var isMain: Bool
+    /// Pixels, against `bounds` in points; the ratio is the Retina scale.
+    var pixelSize = CGSize.zero
 }
 
 enum DisplayLayout {
@@ -31,7 +33,8 @@ enum DisplayLayout {
                 name: names[id] ?? "Display \(id)",
                 bounds: CGDisplayBounds(id),
                 isBuiltin: CGDisplayIsBuiltin(id) != 0,
-                isMain: CGDisplayIsMain(id) != 0)
+                isMain: CGDisplayIsMain(id) != 0,
+                pixelSize: CGSize(width: CGDisplayPixelsWide(id), height: CGDisplayPixelsHigh(id)))
         }
     }
 

@@ -27,6 +27,8 @@ struct Settings: Codable, Equatable, Sendable {
     var showHandMap = false
     /// Write every frame to a gesture log (see GestureLog).
     var recordGestureLog = false
+    /// Send finished gesture logs and gesture check reports to the upload server (see LogUploader).
+    var uploadGestureLog = false
     var soundCues = false
     var pointerMode = PointerMode.absolute
     var trackpadSpeed = 1.0

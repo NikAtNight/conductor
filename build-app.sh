@@ -30,6 +30,16 @@ if [ ! -f AppIcon.icns ]; then
 fi
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
+# Where finished gesture logs go when the user turns on Upload Gesture Logs (see ingest/). Left
+# out of the plist, the menu item is greyed out and nothing leaves the Mac.
+UPLOAD_PLIST=""
+if [[ -n "${CONDUCTOR_UPLOAD_URL:-}" && -n "${CONDUCTOR_UPLOAD_TOKEN:-}" ]]; then
+  UPLOAD_PLIST="    <key>ConductorUploadURL</key>
+    <string>$CONDUCTOR_UPLOAD_URL</string>
+    <key>ConductorUploadToken</key>
+    <string>$CONDUCTOR_UPLOAD_TOKEN</string>"
+fi
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -59,6 +69,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>Conductor watches your hands through the camera to move the cursor and click. Video never leaves this Mac.</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 Nikhil Kapadia.</string>
+$UPLOAD_PLIST
 </dict>
 </plist>
 PLIST
@@ -87,4 +98,4 @@ if [[ -e "$OUTPUT_APP" ]]; then
 fi
 mv "$APP" "$OUTPUT_APP"
 rmdir "$STAGING_DIR"
-echo "Built $OUTPUT_APP ($VERSION, build $BUILD_NUMBER, $ARCHS, signed by ${IDENTITY:-ad-hoc})"
+echo "Built $OUTPUT_APP ($VERSION, build $BUILD_NUMBER, $ARCHS, signed by ${IDENTITY:-ad-hoc}, uploads ${CONDUCTOR_UPLOAD_URL:+to }${CONDUCTOR_UPLOAD_URL:-off})"

@@ -13,6 +13,8 @@ final class Engine: @unchecked Sendable {
     let preferences: Preferences
 
     private let tracker = HandTracker()
+    /// Nil unless this build carries an upload server; see LogUploader.
+    let logUploader: LogUploader?
     private let faceTracker = FaceTracker()
     private let input = InputController()
     /// Moves the cursor between the pipeline's targets at `CursorGlide.rate`; see aim.
@@ -25,6 +27,8 @@ final class Engine: @unchecked Sendable {
     private var pipeline: FramePipeline
     private var prefs: Settings
     private var gestureLog: GestureLog?
+    /// The setup line the current log has, so a refresh only writes one when something changed.
+    private var loggedSetup: GestureLog.Setup?
     private var quality = TrackingQuality()
     private var frameCount = 0
     private var lastHandTime: CFTimeInterval = 0
@@ -54,7 +58,16 @@ final class Engine: @unchecked Sendable {
         self.preferences = preferences
         prefs = preferences.settings
         pipeline = FramePipeline(prefs)
+        logUploader = LogUploader.Config(info: Bundle.main.infoDictionary ?? [:]).map { LogUploader(config: $0) }
         camera.onFrame = { [weak self] buffer in self?.process(buffer) }
+    }
+
+    /// Sends every finished log and report the server hasn't got yet; see LogUploader. Nothing
+    /// happens unless uploading is on and this build has a server.
+    @MainActor
+    func uploadLogs() {
+        guard preferences.settings.uploadGestureLog, let logUploader else { return }
+        camera.queue.async { [self] in logUploader.sweep(excluding: gestureLog?.url) }
     }
 
     @MainActor
@@ -179,8 +192,12 @@ final class Engine: @unchecked Sendable {
         // No-op unless the camera is running and the choice actually changed (checked on its queue).
         camera.switchDevice(to: device)
         let trusted = Permissions.accessibilityGranted(prompt: promptForAccessibility)
+        let setup = GestureLog.Setup(install: logUploader?.installID ?? LogUploader.installID(in: .standard),
+                                     displays: layout, camera: device, placement: resolved,
+                                     accessibility: trusted, settings: snapshot)
         let mainMs = (CACurrentMediaTime() - started) * 1000
         camera.queue.async { [self] in
+            let uploadTurnedOn = snapshot.uploadGestureLog && !prefs.uploadGestureLog
             prefs = snapshot
             displayLayout = layout
             post(pipeline.apply(snapshot, map: map, displays: bounds,
@@ -189,8 +206,11 @@ final class Engine: @unchecked Sendable {
             post(pipeline.setInputAllowed(trusted))
             publishBox()
             publishTargetDisplay()
+            var recordingStopped = false
             if !snapshot.recordGestureLog {
-                gestureLog = nil
+                recordingStopped = gestureLog != nil
+                gestureLog = nil // closes the file, so it can be sent below
+                loggedSetup = nil
             } else if gestureLog == nil {
                 do {
                     gestureLog = try GestureLog()
@@ -198,7 +218,14 @@ final class Engine: @unchecked Sendable {
                     NSLog("Conductor: can't start the gesture log: \(error)")
                 }
             }
+            if let gestureLog, loggedSetup != setup {
+                gestureLog.setup(setup)
+                loggedSetup = setup
+            }
             gestureLog?.note("refresh: \(Int(mainMs)) ms on the main thread")
+            if snapshot.uploadGestureLog, uploadTurnedOn || recordingStopped {
+                logUploader?.sweep(excluding: gestureLog?.url)
+            }
         }
     }
 
@@ -466,7 +493,8 @@ final class Engine: @unchecked Sendable {
         if let gestureLog {
             gestureLog.write(time: Date(), fps: fps, hands: hands, primary: primary, face: face,
                              output: frame.recognized, cursor: frame.cursor, sinceLastMs: sinceLast.map { $0 * 1000 },
-                             detectMs: detectMs, faceMs: faceMs, processMs: (CACurrentMediaTime() - now) * 1000)
+                             detectMs: detectMs, faceMs: faceMs, processMs: (CACurrentMediaTime() - now) * 1000,
+                             warning: warning, idle: idle)
         }
         let recognized = frame.recognized
         let clicked = frame.commands.contains(where: \.isClick)

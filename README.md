@@ -324,7 +324,8 @@ timestamp, every hand joint Vision found with its confidence, the measurements t
 decides with (pinch distances, index lift and visible length, finger cross, fist and pointing checks), the mode,
 any actions fired, where the cursor went, and frame timing (gap since the previous camera frame, time
 in Vision, time for the whole frame). Camera stalls and settings refreshes get their own lines. It's numbers only, never camera images, and it stays
-on your Mac. Turn it off when you're done; it grows by a few megabytes a minute.
+on your Mac unless you turn on Upload Gesture Logs (below). Turn it off when you're done; it grows
+by a few megabytes a minute.
 
 While recording, Conductor also runs Vision's face request and logs your face: its box (the height
 is a distance gauge), head roll, yaw and pitch in degrees (pitch positive looking down), Vision's
@@ -368,6 +369,121 @@ Replay runs the recognizer without posting input. Its ready-pose setting and map
 the recording, and recovering an earlier mode switch changes how later frames are interpreted.
 The logs contain joint positions but no labels for intended gestures, so action totals alone do
 not measure accuracy.
+
+The first line of every log is a setup line, written again whenever any of it changes: the install
+ID (below), the app version and build, the macOS version, the Mac's model identifier and CPU
+architecture, each display's name, position, size in points and Retina scale, the camera's name,
+model and active format, where the camera sits, whether Accessibility is granted, and the settings
+in force, with per-app profiles reduced to a count and camera and display UUIDs replaced by names.
+Without the thresholds that fired an action the frames can't be read back; the display layout is
+what the control box was mapped to. Frames also
+carry the tracking warning showing at the time (too dark, unsure) and an `idle` flag on frames taken
+at the power-saving rate.
+
+## Uploading gesture logs
+
+Menu bar > Upload Gesture Logs sends every finished gesture log and gesture check report in
+`~/Library/Logs/Conductor/` to the upload server, so recordings from more than one Mac can be tuned
+against together. It's off by default, and greyed out in a build with no server. What goes is the
+file on disk and nothing more: the log gzipped (about a tenth the size), the report as it is. The
+first time, the app makes itself a random install ID, kept in its preferences, and sends it with
+every file and in every log's setup line, so one Mac's recordings sit together without naming
+anyone. Nothing in a log names the person or the Mac: no username, hostname, serial number,
+hardware, camera or display UUID, or the apps they use. A preferences reset makes a new install ID;
+that's the trade for an ID that can't be matched to a machine. The app version and macOS version go
+along as headers too.
+
+Uploads happen when you turn the item on, when a recording stops, when a gesture check saves its
+report, and at launch for anything left over (a quit mid-recording, a Mac that was offline). A file
+counts as sent only once the server has it, so a failed upload is tried again at the next of those
+moments, and the server keeps the first copy if the same file arrives twice. A recording that gzips
+past 100 MB (over three hours) is skipped. The gzip and the upload run on their own queue, never
+the camera's, and the local files stay where they are.
+
+The server is a Cloudflare Worker in `ingest/` that files each upload in an R2 bucket as
+`recordings/<install id>/<file>.gz` or `reports/<install id>/<file>`. To stand one up:
+
+```sh
+cd ingest && npm install
+npx wrangler login
+npx wrangler r2 bucket create conductor-recordings
+npx wrangler secret put UPLOAD_TOKEN    # any long random string; the app sends it as a bearer token
+npm run deploy                          # prints the Worker's URL
+```
+
+Then build the app with the address and the token, which build-app.sh writes into Info.plist:
+
+```sh
+CONDUCTOR_UPLOAD_URL=https://conductor-logs.<your subdomain>.workers.dev \
+CONDUCTOR_UPLOAD_TOKEN=<the token> ./build-app.sh
+```
+
+Keep those two in a file outside the repo (`~/.config/conductor/upload.env`, mode 600, `source` it
+before building) rather than in a shell history or a commit.
+
+`npm test` in `ingest/` runs the Worker's tests and `npm run typecheck` its types.
+
+### What keeps the bucket safe
+
+The token is one shared secret baked into every copy of the app, so anyone who opens the app
+bundle has it. The Worker is written on the assumption that they do. It takes PUT only, over HTTPS,
+of the two file names Conductor writes, under a UUID install ID, under 100 MB, with a SHA-256 the
+app sends and R2 checks against the body. A name that's already there is never overwritten: the
+same file again gets a 200, a different file a 409. Each install gets 20 uploads a minute and each
+address 60, through Workers rate limiting, and the token compare is of digests, so neither the
+token's bytes nor its length show in response times. Nothing can be read back: the Worker has no
+GET, the bucket stays private (no r2.dev access), and reading goes through an R2 API token with
+read access that lives only on the machine running DuckDB.
+
+So a leaked token lets someone add junk logs at a bounded rate and nothing more. If that starts,
+rotate: `npx wrangler secret put UPLOAD_TOKEN` with a new value, rebuild the app, and the old builds'
+uploads fail quietly until people update. Treat installs as untrusted in analysis, since an install
+ID is whatever the uploader says it is; the files under an ID you know are the ones to tune from.
+The app side never follows a redirect, so a server that bounces the request can't send the token
+elsewhere, and reads only the status code and the first 200 bytes of the reply.
+
+What's left is the Cloudflare account itself: keep two-factor on, scope any API token to this
+Worker and bucket, and set a billing alert on R2 storage so a flood shows up as a notification
+rather than a bill.
+
+## Querying the recordings
+
+DuckDB reads the gzipped logs straight from the bucket; nothing is imported first. Install it
+(`brew install duckdb`), make an R2 API token with read access in the Cloudflare dashboard, and tell
+DuckDB about it once:
+
+```sql
+CREATE PERSISTENT SECRET r2 (TYPE r2, KEY_ID '<access key id>', SECRET '<secret>', ACCOUNT_ID '<account id>');
+```
+
+DuckDB reads an R2 secret only for `r2://` paths, which is what the views use; `s3://` would go to
+Amazon and fail.
+
+`scripts/recordings.sql` defines views over the bucket, each row tagged with the install ID and the
+recording or report it came from: `frames` (one row per camera frame; `hands`, `measures`, `face` and
+`cursor` are nested columns, and `measures` is the log's `primary`, a reserved word in SQL), `notes`
+(the lines between frames), `setups` (one row per setup line: the Mac, displays, camera and
+settings), and `reports` (one row per gesture per hand in each gesture check).
+
+```sh
+duckdb -init scripts/recordings.sql
+```
+
+DuckDB checks each view against the files when it's made, so until the bucket holds a recording
+and a report this stops with "No files found".
+
+```sql
+select recording, count(*) as frames, avg(measures.pinch.indexTip) as index_pinch
+from frames where measures is not null group by 1 order by 1;
+select hands[1].joints.indexTip, mode from frames where len(hands) > 0 limit 5;
+select hand, title, verdict, count(*) from reports group by all order by 1, 2;
+select install, len(displays) as monitors, displays[1].width, model, settings.pinchEngage from setups;
+```
+
+The views read wherever the `root` variable points. To work on a downloaded copy of the bucket with
+the same folder layout, `set variable root = '/path/to/copy';` and the next query uses it. A
+recording's file is the same JSONL the replay tests take, so `gunzip` it and run it back through the
+recognizer as above.
 
 ## Tuning
 
@@ -424,7 +540,8 @@ Sources/Conductor/
   Camera/        AVCaptureSession wrapper, camera choice, brightness/confidence checks
   Tracking/      Vision hand pose and face requests, the HandPose model (open hand, fist, two
                  fingers, the pointing sign), the FacePose model (head angles, eyes), the gesture
-                 log and the replays of it (look calibration, hands)
+                 log and the replays of it (look calibration, hands), gzip and the upload of
+                 finished logs
   Gestures/      GestureMap, GestureRecognizer (control, pause, scroll lever and scroll mode, dwell,
                  swipes, pointing), TriggerReading (one frame's start condition per trigger),
                  ControlBox, ScreenMapper, calibration, One Euro filter, pointer helpers,
@@ -436,6 +553,8 @@ Sources/Conductor/
                  gesture check window
   Model/         Settings (every knob and its default), Preferences (stores Settings in UserDefaults),
                  presets and app profiles, TrackingState (UI)
+ingest/          The upload server: a Cloudflare Worker that files logs and reports in R2
+scripts/recordings.sql  DuckDB views over the bucket (frames, notes, reports)
 ```
 
 ## Not in the MVP

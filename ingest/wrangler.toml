@@ -1,0 +1,23 @@
+# The upload server for Conductor's gesture logs. See "Uploading gesture logs" in the README.
+name = "conductor-logs"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+[[r2_buckets]]
+binding = "RECORDINGS"
+bucket_name = "conductor-recordings"
+
+# UPLOAD_TOKEN is a secret: npx wrangler secret put UPLOAD_TOKEN
+
+# Uploads per install ID and per client address, so a leaked token can't fill the bucket fast.
+[[unsafe.bindings]]
+name = "PER_INSTALL"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 20, period = 60 }
+
+[[unsafe.bindings]]
+name = "PER_ADDRESS"
+type = "ratelimit"
+namespace_id = "1002"
+simple = { limit = 60, period = 60 }
