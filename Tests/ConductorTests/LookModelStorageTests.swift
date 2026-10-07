@@ -20,8 +20,8 @@ final class LookModelStorageTests: XCTestCase {
     func testATwoPassModelRoundTripsThroughPreferences() {
         let suite = defaults()
         let model = twoPassModel
-        Preferences(defaults: suite).lookModel = model
-        XCTAssertEqual(Preferences(defaults: suite).lookModel, model)
+        Preferences(defaults: suite).settings.lookModel = model
+        XCTAssertEqual(Preferences(defaults: suite).settings.lookModel, model)
     }
 
     func testAModelSavedAsAngleRangesLoadsAsNotCalibrated() {
@@ -30,7 +30,7 @@ final class LookModelStorageTests: XCTestCase {
         """
         let suite = defaults()
         suite.set(Data(old.utf8), forKey: "lookModel")
-        XCTAssertNil(Preferences(defaults: suite).lookModel)
+        XCTAssertNil(Preferences(defaults: suite).settings.lookModel)
     }
 
     func testAFlatSinglePassFromTheFirstBuildsLoadsAsNotCalibrated() {
@@ -39,17 +39,17 @@ final class LookModelStorageTests: XCTestCase {
         """
         let suite = defaults()
         suite.set(Data(flat.utf8), forKey: "lookModel")
-        XCTAssertNil(Preferences(defaults: suite).lookModel)
+        XCTAssertNil(Preferences(defaults: suite).settings.lookModel)
     }
 
     func testLoadingPreferencesDoesNotOverwriteTheSavedModel() {
         let suite = defaults()
         let model = twoPassModel
-        Preferences(defaults: suite).lookModel = model
+        Preferences(defaults: suite).settings.lookModel = model
         // Opening and dropping Preferences again must leave the stored model alone, however many
-        // times, since init sets the published properties one by one.
+        // times, since init saves what it loaded.
         _ = Preferences(defaults: suite)
         _ = Preferences(defaults: suite)
-        XCTAssertEqual(Preferences(defaults: suite).lookModel, model)
+        XCTAssertEqual(Preferences(defaults: suite).settings.lookModel, model)
     }
 }

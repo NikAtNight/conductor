@@ -129,14 +129,12 @@ final class SwipeTests: XCTestCase {
         XCTAssertNotNil(r.update(hands: [PoseFixtures.twoFingers()], at: 0).pointer)
     }
 
-    func testSavedMapsFromBeforeSwipesGetTheDefaults() throws {
-        let suite = try XCTUnwrap(UserDefaults(suiteName: "SwipeTests.\(UUID())"))
-        var old = GestureMap.standard
-        old.bindings[.swipeLeft] = nil
-        old.bindings[.swipeRight] = nil
-        old[.ringPinch] = .middleClick
-        old.save(to: suite)
-        let loaded = GestureMap.load(from: suite)
+    func testSavedMapsFromBeforeSwipesGetTheDefaults() {
+        var old = Settings()
+        old.gestureMap.bindings[.swipeLeft] = nil
+        old.gestureMap.bindings[.swipeRight] = nil
+        old.gestureMap[.ringPinch] = .middleClick
+        let loaded = old.normalized().gestureMap
         XCTAssertEqual(loaded[.swipeRight], .shortcut(back))
         XCTAssertEqual(loaded[.ringPinch], .middleClick, "existing choices survive")
     }

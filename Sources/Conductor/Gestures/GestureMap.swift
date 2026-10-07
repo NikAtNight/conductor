@@ -164,13 +164,6 @@ struct GestureMap: Codable, Equatable {
         set { bindings[trigger] = newValue }
     }
 
-    static func load(from defaults: UserDefaults) -> GestureMap {
-        guard let data = defaults.data(forKey: "gestureMap"),
-              var map = try? JSONDecoder().decode(GestureMap.self, from: data) else { return .standard }
-        map.addMissingTriggers()
-        return map
-    }
-
     /// Triggers added after the map was saved get their default binding. Switch display shipped
     /// on the ring pinch before the pointing sign existed; a map from then moves it to the sign
     /// once, since the ring finger sits next to a sore little finger. Rebinding the ring pinch
@@ -179,12 +172,6 @@ struct GestureMap: Codable, Equatable {
         if bindings[.indexPoint] == nil, self[.ringPinch] == .switchDisplay { self[.ringPinch] = .none }
         for trigger in Trigger.allCases where bindings[trigger] == nil {
             bindings[trigger] = GestureMap.standard[trigger]
-        }
-    }
-
-    func save(to defaults: UserDefaults) {
-        if let data = try? JSONEncoder().encode(self) {
-            defaults.set(data, forKey: "gestureMap")
         }
     }
 }

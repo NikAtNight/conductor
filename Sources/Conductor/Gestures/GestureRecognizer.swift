@@ -80,17 +80,7 @@ struct GestureRecognizer {
         var trigger: Trigger?
     }
 
-    enum MainHand: String, CaseIterable, Identifiable {
-        case right, left, either
-        var id: String { rawValue }
-        var title: String {
-            switch self {
-            case .right: return "Right hand"
-            case .left: return "Left hand"
-            case .either: return "Whichever hand comes first"
-            }
-        }
-    }
+    typealias MainHand = Settings.MainHand
 
     struct Config {
         /// Thumb-to-fingertip distance (in hand scales) below which a pinch engages.

@@ -11,12 +11,12 @@ final class Cues {
         state.events
             .sink { [weak preferences] event in
                 guard let preferences else { return }
-                Self.handle(event, sounds: preferences.soundCues)
+                Self.handle(event, sounds: preferences.settings.soundCues)
             }
             .store(in: &cancellables)
         state.clicks
             .sink { [weak preferences] in
-                if preferences?.soundCues == true { Self.play("Tink") }
+                if preferences?.settings.soundCues == true { Self.play("Tink") }
             }
             .store(in: &cancellables)
     }

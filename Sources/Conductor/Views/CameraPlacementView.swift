@@ -7,21 +7,21 @@ struct CameraPlacementView: View {
     @ObservedObject var preferences: Preferences
     @State private var displays: [DisplayInfo] = DisplayLayout.current()
     private var resolved: (x: CGFloat, display: DisplayInfo)? {
-        CameraPlacement.resolve(preferences.cameraPlacement, displays: displays,
-                                builtInCamera: CameraCapture.isBuiltIn(id: preferences.cameraDeviceID))
+        CameraPlacement.resolve(preferences.settings.cameraPlacement, displays: displays,
+                                builtInCamera: CameraCapture.isBuiltIn(id: preferences.settings.cameraDeviceID))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             DisplayMap(displays: displays, camera: resolved) { display, x in
-                preferences.cameraPlacement = CameraPlacement(displayUUID: display.uuid, x: x)
+                preferences.settings.cameraPlacement = CameraPlacement(displayUUID: display.uuid, x: x)
             }
             .frame(height: 150)
             HStack(alignment: .firstTextBaseline) {
                 Text(summary).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Automatic") { preferences.cameraPlacement = nil }
-                    .disabled(preferences.cameraPlacement == nil)
+                Button("Automatic") { preferences.settings.cameraPlacement = nil }
+                    .disabled(preferences.settings.cameraPlacement == nil)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
@@ -31,7 +31,7 @@ struct CameraPlacementView: View {
 
     private var summary: String {
         guard let resolved else { return "No displays found." }
-        let prefix = preferences.cameraPlacement == nil ? "Automatic: camera" : "Camera"
+        let prefix = preferences.settings.cameraPlacement == nil ? "Automatic: camera" : "Camera"
         return "\(prefix) on \(resolved.display.name). Click a screen to move it."
     }
 }

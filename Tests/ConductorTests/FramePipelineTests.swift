@@ -20,8 +20,8 @@ final class FramePipelineTests: XCTestCase {
     /// Production defaults, except that taking control isn't the point of most tests here.
     private func makePipeline(map: GestureMap = .standard, requireReadyPose: Bool = false,
                               displays: [String: CGRect]? = nil,
-                              tweak: (inout Preferences.Snapshot) -> Void = { _ in }) -> FramePipeline {
-        var snapshot = Preferences(defaults: UserDefaults(suiteName: "FramePipelineTests.\(UUID())")!).snapshot
+                              tweak: (inout Settings) -> Void = { _ in }) -> FramePipeline {
+        var snapshot = Settings()
         snapshot.requireReadyPose = requireReadyPose
         tweak(&snapshot)
         var p = FramePipeline(snapshot)
@@ -160,8 +160,7 @@ final class FramePipelineTests: XCTestCase {
         frame([PoseFixtures.pinched()], count: 3)
         var map = GestureMap.standard
         map[.indexPinch] = .rightClick
-        let snapshot = Preferences(defaults: UserDefaults(suiteName: "FramePipelineTests.\(UUID())")!).snapshot
-        XCTAssertEqual(pipeline.apply(snapshot, map: map, displays: [screen], cameraMount: nil), [.leftUp(clickCount: 1)])
+        XCTAssertEqual(pipeline.apply(Settings(), map: map, displays: [screen], cameraMount: nil), [.leftUp(clickCount: 1)])
     }
 
     // MARK: Look mode
@@ -318,7 +317,7 @@ final class FramePipelineTests: XCTestCase {
 
     func testTheControlBoxFollowsTheSettings() {
         let before = pipeline.box
-        var snapshot = Preferences(defaults: UserDefaults(suiteName: "FramePipelineTests.\(UUID())")!).snapshot
+        var snapshot = Settings()
         snapshot.boxWidth = 0.3
         _ = pipeline.apply(snapshot, map: .standard, displays: [screen], cameraMount: nil)
         XCTAssertLessThan(pipeline.box.width, before.width)

@@ -20,7 +20,7 @@ final class Engine: @unchecked Sendable {
 
     // Touched only on the camera queue.
     private var pipeline: FramePipeline
-    private var prefs: Preferences.Snapshot
+    private var prefs: Settings
     private var gestureLog: GestureLog?
     private var quality = TrackingQuality()
     private var frameCount = 0
@@ -49,7 +49,7 @@ final class Engine: @unchecked Sendable {
     init(state: TrackingState, preferences: Preferences) {
         self.state = state
         self.preferences = preferences
-        prefs = preferences.snapshot
+        prefs = preferences.settings
         pipeline = FramePipeline(prefs)
         camera.onFrame = { [weak self] buffer in self?.process(buffer) }
     }
@@ -61,7 +61,7 @@ final class Engine: @unchecked Sendable {
             return
         }
         do {
-            try camera.configure(deviceID: preferences.cameraDeviceID)
+            try camera.configure(deviceID: preferences.settings.cameraDeviceID)
         } catch {
             state.error = "Camera setup failed: \(error)"
             return
@@ -162,7 +162,7 @@ final class Engine: @unchecked Sendable {
     @MainActor
     func refreshFromMainActor(promptForAccessibility: Bool = false) {
         let started = CACurrentMediaTime()
-        let snapshot = preferences.snapshot
+        let snapshot = preferences.settings
         let map = Preferences.effectiveMap(base: snapshot.gestureMap, profiles: snapshot.appProfiles,
                                            frontmost: frontmostBundleID)
         let layout = DisplayLayout.current()

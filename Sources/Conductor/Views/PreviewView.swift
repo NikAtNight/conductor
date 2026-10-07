@@ -21,8 +21,8 @@ struct PreviewView: View {
     private var camera: some View {
         ZStack(alignment: .bottomLeading) {
             CameraLayerView(session: session, hands: state.hands, face: state.face,
-                            controlBox: ScreenMapper.visionRect(forViewBox: state.controlBox, mirrored: preferences.mirrored),
-                            onBoxEdited: { preferences.calibratedBox = $0 })
+                            controlBox: ScreenMapper.visionRect(forViewBox: state.controlBox, mirrored: preferences.settings.mirrored),
+                            onBoxEdited: { preferences.settings.calibratedBox = $0 })
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 12) {
                     Text(state.gestureLabel).fontWeight(.semibold)
@@ -41,7 +41,7 @@ struct PreviewView: View {
                     }
                 }
                 .font(.system(.body, design: .monospaced))
-                Text(preferences.calibratedBox == nil
+                Text(preferences.settings.calibratedBox == nil
                      ? "The dashed box maps to your screen. Drag it to move, drag a corner to resize."
                      : "Your box. Drag to move, drag a corner to resize; Settings > Tracking > Use automatic resets it.")
                     .font(.caption)
@@ -64,8 +64,8 @@ private struct GesturePanel: View {
     @ObservedObject var preferences: Preferences
 
     var body: some View {
-        let map = preferences.gestureMap
-        let hand = GestureRecognizer.primaryHand(state.hands, prefer: preferences.mainHand)
+        let map = preferences.settings.gestureMap
+        let hand = GestureRecognizer.primaryHand(state.hands, prefer: preferences.settings.mainHand)
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
                 Text("What your hand is doing").font(.headline)
@@ -74,7 +74,7 @@ private struct GesturePanel: View {
                 ForEach(Trigger.allCases.filter { map[$0] != .none }) { trigger in
                     row(trigger, action: map[trigger], hand: hand)
                 }
-                if preferences.appProfiles.isEmpty == false {
+                if preferences.settings.appProfiles.isEmpty == false {
                     Text("Shows the Everywhere bindings. An app with its own profile may differ.")
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
@@ -87,7 +87,7 @@ private struct GesturePanel: View {
     private func row(_ trigger: Trigger, action: GestureAction, hand: HandPose?) -> some View {
         let active = state.activeTrigger == trigger
         return HStack(spacing: 8) {
-            HandSignView(trigger: trigger, hand: preferences.mainHand)
+            HandSignView(trigger: trigger, hand: preferences.settings.mainHand)
                 .frame(width: 36, height: 36)
             VStack(alignment: .leading, spacing: 2) {
                 Text(trigger.title).font(.caption).fontWeight(active ? .semibold : .regular)
@@ -107,7 +107,7 @@ private struct GesturePanel: View {
     /// For a pinch: 0 with the fingertip at release distance or further, 1 at engage or closer.
     private func closeness(of trigger: Trigger, in hand: HandPose?) -> Double? {
         guard let tip = trigger.fingertip, let hand, let distance = hand.normalizedDistance(.thumbTip, tip) else { return nil }
-        let engage = preferences.pinchEngage, release = preferences.pinchRelease
+        let engage = preferences.settings.pinchEngage, release = preferences.settings.pinchRelease
         guard release > engage else { return nil }
         return ((release - Double(distance)) / (release - engage)).clamped(to: 0...1)
     }

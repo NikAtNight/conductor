@@ -187,10 +187,10 @@ final class CalibrationPointTests: XCTestCase {
     func testABoxCalibratedFromTheFingertipsIsDroppedOnce() throws {
         let suite = try XCTUnwrap(UserDefaults(suiteName: "CalibrationPointTests.\(UUID())"))
         suite.set([0.1, 0.3, 0.6, 0.25], forKey: "calibratedBox")
-        XCTAssertNil(Preferences(defaults: suite).calibratedBox)
+        XCTAssertNil(Preferences(defaults: suite).settings.calibratedBox)
 
         let fresh = Preferences(defaults: suite)
-        fresh.calibratedBox = CGRect(x: 0.1, y: 0.3, width: 0.6, height: 0.25)
-        XCTAssertNotNil(Preferences(defaults: suite).calibratedBox, "a box calibrated from the knuckle stays")
+        fresh.settings.calibratedBox = CGRect(x: 0.1, y: 0.3, width: 0.6, height: 0.25)
+        XCTAssertNotNil(Preferences(defaults: suite).settings.calibratedBox, "a box calibrated from the knuckle stays")
     }
 }

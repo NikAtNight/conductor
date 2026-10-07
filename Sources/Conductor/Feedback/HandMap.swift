@@ -25,7 +25,7 @@ final class HandMap {
         panel.contentView = NSHostingView(rootView: HandMapView(state: state, preferences: preferences))
 
         state.$isRunning
-            .combineLatest(preferences.$showHandMap)
+            .combineLatest(preferences.$settings.map(\.showHandMap).removeDuplicates())
             .sink { [weak self] running, enabled in self?.setVisible(running && enabled) }
             .store(in: &cancellables)
     }
@@ -48,8 +48,8 @@ private struct HandMapView: View {
     @ObservedObject var preferences: Preferences
 
     var body: some View {
-        let hand = GestureRecognizer.primaryHand(state.hands, prefer: preferences.mainHand)
-        let mirrored = preferences.mirrored
+        let hand = GestureRecognizer.primaryHand(state.hands, prefer: preferences.settings.mainHand)
+        let mirrored = preferences.settings.mirrored
         let box = state.controlBox
         Canvas { context, size in
             // Everything is drawn in view space: mirrored like the preview, origin top-left.

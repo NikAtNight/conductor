@@ -271,7 +271,7 @@ final class ScrollModePipelineTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        var snapshot = Preferences(defaults: UserDefaults(suiteName: "ScrollModePipelineTests.\(UUID())")!).snapshot
+        var snapshot = Settings()
         snapshot.requireReadyPose = false
         var map = GestureMap.standard
         map[.crossedFingers] = .scrollMode

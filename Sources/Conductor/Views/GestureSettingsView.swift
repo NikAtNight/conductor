@@ -26,7 +26,7 @@ struct GestureSettingsView: View {
                     .fixedSize()
                     if let editing {
                         Button("Remove") {
-                            preferences.appProfiles[editing] = nil
+                            preferences.settings.appProfiles[editing] = nil
                             self.editing = nil
                         }
                     }
@@ -36,12 +36,12 @@ struct GestureSettingsView: View {
                     : "These bindings apply while this app is in front. Everything else uses Everywhere. Pause / resume and scroll mode are shared by every profile, so set them under Everywhere.")
             }
             Section("Bindings") {
-                Picker("Main hand", selection: $preferences.mainHand) {
+                Picker("Main hand", selection: $preferences.settings.mainHand) {
                     ForEach(GestureRecognizer.MainHand.allCases) { Text($0.title).tag($0) }
                 }
                 Caption("The pictures show this hand, as you see it in the preview. It's also the hand that moves the cursor when both are in view; the other one joins in for two-hand gestures. Any hand can make the gestures.")
                 ForEach(Trigger.allCases) { trigger in
-                    GestureRow(trigger: trigger, hand: preferences.mainHand, action: binding(for: trigger))
+                    GestureRow(trigger: trigger, hand: preferences.settings.mainHand, action: binding(for: trigger))
                 }
             }
             Section("Push to talk") {
@@ -60,7 +60,7 @@ struct GestureSettingsView: View {
                 HStack {
                     Text("Cross index and middle fingers to switch scroll mode on and off")
                     Spacer()
-                    Button("Set up") { preferences.gestureMap[.crossedFingers] = .scrollMode }
+                    Button("Set up") { preferences.settings.gestureMap[.crossedFingers] = .scrollMode }
                 }
                 Caption("For scrolling with a relaxed, open hand instead of a fist. Cross your fingers for a moment, uncross them, and rest your hand where it's comfortable: that spot becomes neutral. Knuckles above neutral scroll down the page, below it scroll up, and the farther from neutral, the faster. Tipping your fingers toward the screen lowers the knuckles, so rest with your hand tipped forward a little and you can scroll both ways by rocking at the wrist. Clicks, other gestures, and pause are off until you cross your fingers again. The cursor ring turns purple and shows an arrow while scroll mode is on.")
             }
@@ -76,33 +76,33 @@ struct GestureSettingsView: View {
     }
 
     private var sortedProfiles: [AppProfile] {
-        preferences.appProfiles.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        preferences.settings.appProfiles.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     /// Regular apps that are running and don't have a profile yet.
     private var addableApps: [NSRunningApplication] {
         NSWorkspace.shared.runningApplications
             .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != nil }
-            .filter { $0.bundleIdentifier != Bundle.main.bundleIdentifier && preferences.appProfiles[$0.bundleIdentifier!] == nil }
+            .filter { $0.bundleIdentifier != Bundle.main.bundleIdentifier && preferences.settings.appProfiles[$0.bundleIdentifier!] == nil }
             .sorted { ($0.localizedName ?? "") .localizedCaseInsensitiveCompare($1.localizedName ?? "") == .orderedAscending }
     }
 
     private func add(_ app: NSRunningApplication) {
         guard let id = app.bundleIdentifier else { return }
         // Start from the current everywhere bindings, so only the differences need changing.
-        preferences.appProfiles[id] = AppProfile(bundleID: id, name: app.localizedName ?? id, map: preferences.gestureMap)
+        preferences.settings.appProfiles[id] = AppProfile(bundleID: id, name: app.localizedName ?? id, map: preferences.settings.gestureMap)
         editing = id
     }
 
     private var currentMap: GestureMap {
-        editing.flatMap { preferences.appProfiles[$0]?.map } ?? preferences.gestureMap
+        editing.flatMap { preferences.settings.appProfiles[$0]?.map } ?? preferences.settings.gestureMap
     }
 
     private func setMap(_ map: GestureMap) {
-        if let editing, preferences.appProfiles[editing] != nil {
-            preferences.appProfiles[editing]?.map = map
+        if let editing, preferences.settings.appProfiles[editing] != nil {
+            preferences.settings.appProfiles[editing]?.map = map
         } else {
-            preferences.gestureMap = map
+            preferences.settings.gestureMap = map
         }
     }
 

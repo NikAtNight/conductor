@@ -382,7 +382,8 @@ Sources/Conductor/
   MenuBar/       Status item and menu
   Views/         Preview, toolbar-tab settings window, setup assistant, look calibration overlay,
                  gesture check window
-  Model/         Preferences (UserDefaults), presets and app profiles, TrackingState (UI)
+  Model/         Settings (every knob and its default), Preferences (stores Settings in UserDefaults),
+                 presets and app profiles, TrackingState (UI)
 ```
 
 ## Not in the MVP

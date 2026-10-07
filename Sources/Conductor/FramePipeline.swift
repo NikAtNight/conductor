@@ -44,7 +44,7 @@ struct FramePipeline {
     private var relative = RelativePointer()
     private var precision = PrecisionPointer()
     private var scroll = ScrollPolicy()
-    private var prefs: Preferences.Snapshot
+    private var prefs: Settings
     private var displays: [CGRect] = []
     /// Display UUID to bounds, for the LookPicker's picks. Only used in look mode.
     private var lookDisplays: [String: CGRect] = [:]
@@ -69,7 +69,7 @@ struct FramePipeline {
     /// Hands must spread or close this far (normalized) to fire one cmd+= / cmd+- press.
     static let zoomKeyStep: CGFloat = 0.04
 
-    init(_ snapshot: Preferences.Snapshot) {
+    init(_ snapshot: Settings) {
         prefs = snapshot
         filter = PointFilter(minCutoff: snapshot.smoothing, beta: Self.filterBeta)
     }
@@ -78,7 +78,7 @@ struct FramePipeline {
 
     /// Takes new settings. Rebinding mid-gesture could orphan a held button, so the returned
     /// commands let go of anything the old bindings held.
-    mutating func apply(_ snapshot: Preferences.Snapshot, map: GestureMap, displays: [CGRect],
+    mutating func apply(_ snapshot: Settings, map: GestureMap, displays: [CGRect],
                         cameraMount: (x: CGFloat, display: CGRect)?,
                         lookDisplays: [String: CGRect] = [:]) -> [InputCommand] {
         if snapshot.smoothing != prefs.smoothing {
@@ -338,7 +338,7 @@ struct FramePipeline {
 
     /// Which rectangle the control box maps onto. `current` is kept in follow-cursor mode until the
     /// hand is lost and found again, so the target doesn't hop mid-gesture.
-    static func targetScreen(mode: Preferences.DisplayMode, displays: [CGRect], current: CGRect,
+    static func targetScreen(mode: Settings.DisplayMode, displays: [CGRect], current: CGRect,
                              cursor: CGPoint? = nil) -> CGRect {
         guard !displays.isEmpty else { return current }
         switch mode {

@@ -155,13 +155,14 @@ final class GestureMapTests: XCTestCase {
         XCTAssertEqual(delta, 0.02, accuracy: 1e-9)
     }
 
+    @MainActor
     func testMapRoundTripsThroughDefaults() {
         let suite = UserDefaults(suiteName: "ConductorTests.\(UUID())")!
         var map = GestureMap.standard
         map[.ringPinch] = .shortcut(Shortcut(keyCode: 12, modifiers: CGEventFlags.maskCommand.rawValue))
         map[.littlePinch] = .switchDisplay
-        map.save(to: suite)
-        XCTAssertEqual(GestureMap.load(from: suite), map)
+        Preferences(defaults: suite).settings.gestureMap = map
+        XCTAssertEqual(Preferences(defaults: suite).settings.gestureMap, map)
     }
 
     func testLabelNamesTriggerAndAction() {
@@ -182,21 +183,28 @@ final class SwitchDisplayDefaultTests: XCTestCase {
         return old
     }
 
-    func testTheRingPinchBindingMovesToTheSignOnce() {
-        let suite = UserDefaults(suiteName: "SwitchDisplayDefaultTests.\(UUID())")!
-        oldMap(ringPinch: .switchDisplay).save(to: suite)
-        let map = Preferences(defaults: suite).gestureMap
-        XCTAssertEqual(map[.indexPoint], .switchDisplay)
-        XCTAssertEqual(map[.ringPinch], GestureAction.none)
-        XCTAssertEqual(GestureMap.load(from: suite)[.ringPinch], GestureAction.none, "saved, not just loaded")
-        Preferences(defaults: suite).gestureMap[.ringPinch] = .switchDisplay
-        XCTAssertEqual(Preferences(defaults: suite).gestureMap[.ringPinch], .switchDisplay, "binding it again sticks")
+    /// Writes the map where builds before the settings blob kept it.
+    private func storeLegacy(_ map: GestureMap, in suite: UserDefaults) throws {
+        suite.set(try JSONEncoder().encode(map), forKey: "gestureMap")
     }
 
-    func testARingPinchBoundToSomethingElseIsLeftAlone() {
+    func testTheRingPinchBindingMovesToTheSignOnce() throws {
         let suite = UserDefaults(suiteName: "SwitchDisplayDefaultTests.\(UUID())")!
-        oldMap(ringPinch: .middleClick).save(to: suite)
-        let map = Preferences(defaults: suite).gestureMap
+        try storeLegacy(oldMap(ringPinch: .switchDisplay), in: suite)
+        let map = Preferences(defaults: suite).settings.gestureMap
+        XCTAssertEqual(map[.indexPoint], .switchDisplay)
+        XCTAssertEqual(map[.ringPinch], GestureAction.none)
+        let blob = try XCTUnwrap(suite.data(forKey: Preferences.key))
+        XCTAssertEqual(try JSONDecoder().decode(Settings.self, from: blob).gestureMap[.ringPinch], GestureAction.none,
+                       "saved, not just loaded")
+        Preferences(defaults: suite).settings.gestureMap[.ringPinch] = .switchDisplay
+        XCTAssertEqual(Preferences(defaults: suite).settings.gestureMap[.ringPinch], .switchDisplay, "binding it again sticks")
+    }
+
+    func testARingPinchBoundToSomethingElseIsLeftAlone() throws {
+        let suite = UserDefaults(suiteName: "SwitchDisplayDefaultTests.\(UUID())")!
+        try storeLegacy(oldMap(ringPinch: .middleClick), in: suite)
+        let map = Preferences(defaults: suite).settings.gestureMap
         XCTAssertEqual(map[.ringPinch], .middleClick)
         XCTAssertEqual(map[.indexPoint], .switchDisplay)
     }
@@ -205,7 +213,7 @@ final class SwitchDisplayDefaultTests: XCTestCase {
         let suite = UserDefaults(suiteName: "SwitchDisplayDefaultTests.\(UUID())")!
         let profile = AppProfile(bundleID: "com.example.app", name: "Example", map: oldMap(ringPinch: .switchDisplay))
         suite.set(try JSONEncoder().encode([profile.bundleID: profile]), forKey: "appProfiles")
-        let loaded = try XCTUnwrap(Preferences(defaults: suite).appProfiles[profile.bundleID])
+        let loaded = try XCTUnwrap(Preferences(defaults: suite).settings.appProfiles[profile.bundleID])
         XCTAssertEqual(loaded.map[.ringPinch], GestureAction.none)
         XCTAssertEqual(loaded.map[.indexPoint], .switchDisplay)
     }

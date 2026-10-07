@@ -12,7 +12,7 @@ struct CameraSettingsView: View {
                 Caption(summary)
             }
             Section("Power") {
-                Toggle("Save power when no hand is around", isOn: $preferences.powerSaving)
+                Toggle("Save power when no hand is around", isOn: $preferences.settings.powerSaving)
                 Caption("After a minute without a hand in view, Conductor checks for one a few times a second instead of thirty. It goes back to full speed as soon as your hand appears. The camera stays on either way.")
             }
             Section("Picture quality") {
@@ -29,11 +29,11 @@ struct CameraSettingsView: View {
     }
 
     private var summary: String {
-        let current = CameraCapture.preferredDevice(id: preferences.cameraDeviceID)?.localizedName ?? "no camera found"
-        if preferences.cameraDeviceID != nil, !devices.contains(where: { $0.uniqueID == preferences.cameraDeviceID }) {
+        let current = CameraCapture.preferredDevice(id: preferences.settings.cameraDeviceID)?.localizedName ?? "no camera found"
+        if preferences.settings.cameraDeviceID != nil, !devices.contains(where: { $0.uniqueID == preferences.settings.cameraDeviceID }) {
             return "The chosen camera isn't connected, so Conductor is using \(current)."
         }
-        return preferences.cameraDeviceID == nil ? "Automatic picks \(current)." : "Using \(current)."
+        return preferences.settings.cameraDeviceID == nil ? "Automatic picks \(current)." : "Using \(current)."
     }
 }
 
@@ -51,7 +51,7 @@ struct CameraPicker: View {
     }
 
     var body: some View {
-        Picker(title, selection: $preferences.cameraDeviceID) {
+        Picker(title, selection: $preferences.settings.cameraDeviceID) {
             Text("Automatic").tag(String?.none)
             ForEach(devices, id: \.uniqueID) { device in
                 Text(device.localizedName).tag(Optional(device.uniqueID))

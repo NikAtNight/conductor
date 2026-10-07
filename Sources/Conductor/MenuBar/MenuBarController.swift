@@ -96,7 +96,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let engine = self.engine
         Task {
             await engine.calibrate { box in
-                if let box { preferences.calibratedBox = box }
+                if let box { preferences.settings.calibratedBox = box }
             }
         }
     }
@@ -110,11 +110,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         lookCalibration.start(displays: displays, engine: engine) { [weak self] result in
             switch result {
             case .success(let pass)?:
-                let model = (preferences.lookModel ?? LookModel(passes: [])).adding(pass)
-                preferences.lookModel = model
-                preferences.displayMode = .lookedAt
+                let model = (preferences.settings.lookModel ?? LookModel(passes: [])).adding(pass)
+                preferences.settings.lookModel = model
+                preferences.settings.displayMode = .lookedAt
                 let alert = NSAlert()
-                let switchHint = Self.switchHint(preferences.gestureMap)
+                let switchHint = Self.switchHint(preferences.settings.gestureMap)
                 switch LookCalibration.quality(of: pass) {
                 case .clear:
                     alert.messageText = "Saved for this distance"
@@ -132,7 +132,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 let alert = NSAlert()
                 alert.messageText = "Look calibration didn't work"
                 alert.informativeText = Self.message(for: failure, displays: displays)
-                if case .indistinct = failure { alert.informativeText += " \(Self.switchHint(preferences.gestureMap))" }
+                if case .indistinct = failure { alert.informativeText += " \(Self.switchHint(preferences.settings.gestureMap))" }
                 alert.runModal()
             case nil:
                 break
@@ -146,8 +146,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc func checkGestures() {
         showPreview()
         var config = GestureRecognizer.Config()
-        config.pinchEngage = preferences.pinchEngage
-        config.pinchRelease = preferences.pinchRelease
+        config.pinchEngage = preferences.settings.pinchEngage
+        config.pinchRelease = preferences.settings.pinchRelease
         gestureCheck.start(engine: engine, config: config) { report in
             guard let report else { return }
             do {
@@ -223,8 +223,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         toggleItem.title = state.isRunning ? "Pause Tracking" : "Start Tracking"
-        handMapItem.state = preferences.showHandMap ? .on : .off
-        gestureLogItem.state = preferences.recordGestureLog ? .on : .off
+        handMapItem.state = preferences.settings.showHandMap ? .on : .off
+        gestureLogItem.state = preferences.settings.recordGestureLog ? .on : .off
         if !state.isRunning {
             statusLine.title = "Tracking is off"
         } else if let problem = state.error ?? state.warning {
@@ -249,11 +249,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func toggleHandMap() {
-        preferences.showHandMap.toggle()
+        preferences.settings.showHandMap.toggle()
     }
 
     @objc private func toggleGestureLog() {
-        preferences.recordGestureLog.toggle()
+        preferences.settings.recordGestureLog.toggle()
     }
 
     @objc private func showGestureLogs() {

@@ -1,50 +1,40 @@
 import XCTest
 @testable import Conductor
 
-@MainActor
 final class PresetTests: XCTestCase {
-    private func freshPreferences() -> Preferences {
-        Preferences(defaults: UserDefaults(suiteName: "PresetTests.\(UUID())")!)
-    }
-
     func testSteadierTurnsOnDwellAndLoosensEverything() {
-        let p = freshPreferences()
-        Preset.steady.apply(to: p)
-        XCTAssertTrue(p.dwellClick)
-        XCTAssertLessThan(p.smoothing, 0.6)
-        XCTAssertGreaterThan(p.pinchDeadZone, 0.012)
-        XCTAssertGreaterThan(p.pinchRelease - p.pinchEngage, 0.2)
+        var s = Settings()
+        Preset.steady.apply(to: &s)
+        XCTAssertTrue(s.dwellClick)
+        XCTAssertLessThan(s.smoothing, 0.6)
+        XCTAssertGreaterThan(s.pinchDeadZone, 0.012)
+        XCTAssertGreaterThan(s.pinchRelease - s.pinchEngage, 0.2)
     }
 
     func testStandardUndoesAPreset() {
-        let p = freshPreferences()
-        let before = (p.smoothing, p.dwellClick, p.pinchEngage, p.pinchRelease, p.pinchDeadZone, p.boxWidth)
-        Preset.large.apply(to: p)
-        Preset.standard.apply(to: p)
-        XCTAssertEqual(p.smoothing, before.0)
-        XCTAssertEqual(p.dwellClick, before.1)
-        XCTAssertEqual(p.pinchEngage, before.2)
-        XCTAssertEqual(p.pinchRelease, before.3)
-        XCTAssertEqual(p.pinchDeadZone, before.4)
-        XCTAssertEqual(p.boxWidth, before.5)
+        var s = Settings()
+        Preset.large.apply(to: &s)
+        Preset.standard.apply(to: &s)
+        XCTAssertEqual(s, Settings())
     }
 
     func testEveryPresetKeepsReleaseAboveEngage() {
-        let p = freshPreferences()
+        var s = Settings()
         for preset in Preset.allCases {
-            preset.apply(to: p)
-            XCTAssertGreaterThan(p.pinchRelease, p.pinchEngage, preset.title)
+            preset.apply(to: &s)
+            XCTAssertGreaterThan(s.pinchRelease, s.pinchEngage, preset.title)
         }
     }
 
+    @MainActor
     func testProfilesSurviveARelaunch() {
         let suite = UserDefaults(suiteName: "PresetTests.\(UUID())")!
         let p = Preferences(defaults: suite)
         var map = GestureMap.standard
         map[.fist] = .zoom
-        p.appProfiles["com.apple.Preview"] = AppProfile(bundleID: "com.apple.Preview", name: "Preview", map: map)
+        p.settings.appProfiles["com.apple.Preview"] = AppProfile(bundleID: "com.apple.Preview", name: "Preview", map: map)
         let reloaded = Preferences(defaults: suite)
-        XCTAssertEqual(reloaded.appProfiles["com.apple.Preview"]?.map[.fist], .zoom)
+        XCTAssertEqual(reloaded.settings.appProfiles["com.apple.Preview"]?.map[.fist], .zoom)
     }
 }
 

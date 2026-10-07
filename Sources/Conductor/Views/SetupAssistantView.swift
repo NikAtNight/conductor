@@ -55,11 +55,11 @@ struct SetupAssistantView: View {
                             }
                         }
                     }
-                    step(3, "Your screens and camera", done: preferences.cameraPlacement != nil) {
+                    step(3, "Your screens and camera", done: preferences.settings.cameraPlacement != nil) {
                         Text("\(displaySummary) Click the screen your camera sits on.")
                         CameraPlacementView(preferences: preferences)
                     }
-                    step(4, "Show which screen you're looking at", done: preferences.lookModel != nil) {
+                    step(4, "Show which screen you're looking at", done: preferences.settings.lookModel != nil) {
                         if displays.count < 2 {
                             Text("You have one display, so this isn't needed.")
                         } else {
@@ -72,7 +72,7 @@ struct SetupAssistantView: View {
                             Text(lookText).foregroundStyle(.secondary)
                         }
                     }
-                    step(5, "Calibrate your reach and speed", done: preferences.calibratedBox != nil) {
+                    step(5, "Calibrate your reach and speed", done: preferences.settings.calibratedBox != nil) {
                         Text("Sit as you normally do. Press Calibrate, then move your whole hand around the edge of the area you can reach comfortably for six seconds. Optional; skip it to use the automatic box.")
                         HStack {
                             Button("Calibrate", action: calibrate)
@@ -80,22 +80,22 @@ struct SetupAssistantView: View {
                             Text(calibrationText).foregroundStyle(.secondary)
                         }
                         Text("Then point at something small and adjust the speed until it's easy to land on. Changes apply right away.")
-                        if preferences.pointerMode == .absolute {
-                            SettingSlider(title: "Slow-move speed", value: $preferences.slowMoveSpeed, range: 0.1...1.0, format: "%.0f%%", scale: 100)
+                        if preferences.settings.pointerMode == .absolute {
+                            SettingSlider(title: "Slow-move speed", value: $preferences.settings.slowMoveSpeed, range: 0.1...1.0, format: "%.0f%%", scale: 100)
                         } else {
-                            SettingSlider(title: "Trackpad speed", value: $preferences.trackpadSpeed, range: 0.3...3.0, format: "%.1fx")
+                            SettingSlider(title: "Trackpad speed", value: $preferences.settings.trackpadSpeed, range: 0.3...3.0, format: "%.1fx")
                         }
                     }
                     step(6, "The gestures", done: false) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Picker("Your main hand", selection: $preferences.mainHand) {
+                            Picker("Your main hand", selection: $preferences.settings.mainHand) {
                                 ForEach(GestureRecognizer.MainHand.allCases) { Text($0.title).tag($0) }
                             }
                             .frame(maxWidth: 360)
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .top), count: 3), spacing: 10) {
                                 ForEach(Self.signs, id: \.caption) { sign in
                                     VStack(spacing: 4) {
-                                        HandSignView(pose: sign.pose, arrow: sign.arrow, hand: preferences.mainHand, label: sign.caption)
+                                        HandSignView(pose: sign.pose, arrow: sign.arrow, hand: preferences.settings.mainHand, label: sign.caption)
                                             .frame(width: 72, height: 72)
                                             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
                                         Text(sign.caption).font(.caption).multilineTextAlignment(.center)
@@ -137,7 +137,7 @@ struct SetupAssistantView: View {
     }
 
     private var lookText: String {
-        guard let model = preferences.lookModel, let pass = model.passes.first else { return "" }
+        guard let model = preferences.settings.lookModel, let pass = model.passes.first else { return "" }
         let distances = model.passes.count == 1 ? "1 distance" : "\(model.passes.count) distances"
         return "Calibrated at \(distances) for \(pass.targets.count) displays."
     }
@@ -149,7 +149,7 @@ struct SetupAssistantView: View {
 
     private var calibrationText: String {
         switch state.calibration {
-        case .none: return preferences.calibratedBox == nil ? "" : "Calibrated."
+        case .none: return preferences.settings.calibratedBox == nil ? "" : "Calibrated."
         case .running(let seconds): return "Trace your reach… \(seconds)s"
         case .finished: return "Calibrated."
         case .failed: return "Saw too small an area. Try again moving your whole hand, not just your fingers."

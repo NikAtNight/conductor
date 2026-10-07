@@ -61,12 +61,11 @@ final class HoldKeyTests: XCTestCase {
         XCTAssertNil(InputController.modifier(for: 49))
     }
 
+    @MainActor
     func testHoldKeyRoundTripsAndOldMapsStillLoad() throws {
         let suite = try XCTUnwrap(UserDefaults(suiteName: "HoldKeyTests.\(UUID())"))
-        var map = GestureMap.standard
-        map[.ringPinch] = .holdKey(rightCommand)
-        map.save(to: suite)
-        XCTAssertEqual(GestureMap.load(from: suite)[.ringPinch], .holdKey(rightCommand))
+        Preferences(defaults: suite).settings.gestureMap[.ringPinch] = .holdKey(rightCommand)
+        XCTAssertEqual(Preferences(defaults: suite).settings.gestureMap[.ringPinch], .holdKey(rightCommand))
         XCTAssertEqual(GestureAction.holdKey(rightCommand).title, "Hold Right ⌘")
         XCTAssertEqual(GestureAction.holdKey(rightCommand).kind, .holdKey(GestureAction.unsetKey))
     }

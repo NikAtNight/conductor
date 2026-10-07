@@ -62,7 +62,7 @@ final class CursorRing {
         window.contentView = view
 
         state.$feedback
-            .combineLatest(state.$mode, state.$isRunning, preferences.$showCursorRing)
+            .combineLatest(state.$mode, state.$isRunning, preferences.$settings.map(\.showCursorRing).removeDuplicates())
             .sink { [weak self] feedback, mode, running, enabled in
                 self?.update(feedback: feedback, mode: mode, visible: running && enabled)
             }

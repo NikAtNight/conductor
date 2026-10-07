@@ -23,40 +23,38 @@ enum Preset: String, CaseIterable, Identifiable {
         }
     }
 
-    @MainActor
-    func apply(to p: Preferences) {
+    /// Sets this preset's knobs. Standard is `Settings()`; the others start from it.
+    func apply(to settings: inout Settings) {
+        var p = Settings()
         switch self {
         case .standard:
-            p.smoothing = 0.6
-            p.pinchEngage = 0.35
-            p.pinchRelease = 0.55
-            p.pinchDeadZone = 0.012
-            p.dwellClick = false
-            p.dwellTime = 0.8
-            p.dwellRadius = 0.015
-            p.boxWidth = 0.6
-            p.requireReadyPose = true
+            break
         case .steady:
             p.smoothing = 0.3
-            p.pinchEngage = 0.3
-            p.pinchRelease = 0.6
+            p.setPinchEngage(0.3)
+            p.setPinchRelease(0.6)
             p.pinchDeadZone = 0.03
             p.dwellClick = true
             p.dwellTime = 1.0
             p.dwellRadius = 0.03
-            p.boxWidth = 0.6
-            p.requireReadyPose = true
         case .large:
-            p.smoothing = 0.6
-            p.pinchEngage = 0.45
-            p.pinchRelease = 0.7
+            p.setPinchEngage(0.45)
+            p.setPinchRelease(0.7)
             p.pinchDeadZone = 0.02
             p.dwellClick = true
             p.dwellTime = 1.0
             p.dwellRadius = 0.025
             p.boxWidth = 0.85
-            p.requireReadyPose = true
         }
+        settings.smoothing = p.smoothing
+        settings.setPinchEngage(p.pinchEngage)
+        settings.setPinchRelease(p.pinchRelease)
+        settings.pinchDeadZone = p.pinchDeadZone
+        settings.dwellClick = p.dwellClick
+        settings.dwellTime = p.dwellTime
+        settings.dwellRadius = p.dwellRadius
+        settings.boxWidth = p.boxWidth
+        settings.requireReadyPose = p.requireReadyPose
     }
 }
 
