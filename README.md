@@ -392,10 +392,11 @@ at the power-saving rate.
 ## Uploading gesture logs
 
 Conductor sends every finished gesture log and gesture check report in `~/Library/Logs/Conductor/`
-to the upload server, so recordings from more than one Mac can be tuned against together. It isn't
-a setting: the log is how tracking gets tuned, and Settings > Data says exactly what it holds and
-what it never does (no camera images or video, nothing typed, no app names, nothing that names the
-person or the Mac). A build with no server keeps the logs local. What goes is the
+to the upload server, so recordings from more than one Mac can be tuned against together. It's on
+by default and Settings > Data > "Send logs to the developer" turns it off; the log itself isn't a
+setting, since it's how tracking gets tuned. Settings > Data says exactly what it holds and what it
+never does (no camera images or video, nothing typed, no app names, nothing that names the person
+or the Mac). A build with no server keeps the logs local, and so does turning it off. What goes is the
 file on disk and nothing more: the log gzipped (about a tenth the size), the report as it is. The
 first time, the app makes itself a random install ID, kept in its preferences, and sends it with
 every file and in every log's setup line, so one Mac's recordings sit together without naming

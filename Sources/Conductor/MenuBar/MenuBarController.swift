@@ -272,7 +272,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 preferences: preferences,
                 calibrate: { [weak self] in self?.calibrate() },
                 calibrateLook: { [weak self] in self?.calibrateLook() },
-                data: DataSettingsView(installID: engine.logUploader?.installID ?? LogUploader.installID(in: .standard),
+                data: DataSettingsView(preferences: preferences,
+                                       installID: engine.logUploader?.installID ?? LogUploader.installID(in: .standard),
                                        uploads: engine.logUploader != nil,
                                        showLogs: { [weak self] in self?.showGestureLogs() },
                                        uploadNow: { [weak self] in self?.engine.uploadLogs() }))

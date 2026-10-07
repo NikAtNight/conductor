@@ -1,10 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// What Conductor records while it runs and where it goes. Nothing here is a switch: the log is
-/// how tracking gets tuned against real hands, and it never holds a picture. See GestureLog and
-/// LogUploader for what's written and sent.
+/// What Conductor records while it runs and where it goes. The log itself isn't a switch: it's
+/// how tracking gets tuned against real hands, and it never holds a picture. Sending it is. See
+/// GestureLog and LogUploader for what's written and sent.
 struct DataSettingsView: View {
+    @ObservedObject var preferences: Preferences
     let installID: String
     /// Whether this build carries an upload server.
     let uploads: Bool
@@ -15,7 +16,7 @@ struct DataSettingsView: View {
     var body: some View {
         Form {
             Section("What Conductor records") {
-                Text("While tracking is on, Conductor keeps a log of what it sees and what it does with it, and sends it to the developer to make tracking better. It is numbers only. No picture ever leaves the camera.")
+                Text("While tracking is on, Conductor keeps a log of what it sees and what it does with it, and can send it to the developer to make tracking better. It is numbers only. No picture ever leaves the camera.")
                     .fixedSize(horizontal: false, vertical: true)
                 VStack(alignment: .leading, spacing: 6) {
                     bullet("The 21 points found on each hand, and how sure Vision is of each one")
@@ -36,13 +37,15 @@ struct DataSettingsView: View {
                     }
                 }
                 Caption("A random ID made the first time Conductor ran, and the only thing a recording is filed under. Quote it when reporting a problem so the recordings from this Mac can be found.")
+                Toggle("Send logs to the developer", isOn: $preferences.settings.uploadLogs)
+                    .disabled(!uploads)
                 HStack {
                     Button("Show Logs", action: showLogs)
-                    Button("Upload Now", action: uploadNow).disabled(!uploads)
+                    Button("Upload Now", action: uploadNow).disabled(!uploads || !preferences.settings.uploadLogs)
                     Spacer()
                 }
                 Caption(uploads
-                    ? "Logs are sent when tracking stops and once an hour while it runs. They stay on this Mac too, for a week or 1 GB, whichever comes first. A log grows by a few megabytes a minute while a hand is in view."
+                    ? "On, logs are sent when tracking stops and once an hour while it runs. Off keeps them on this Mac. Either way they stay here for a week or 1 GB, whichever comes first. A log grows by a few megabytes a minute while a hand is in view."
                     : "This build has no upload server, so logs stay on this Mac: a week or 1 GB, whichever comes first.")
             }
         }

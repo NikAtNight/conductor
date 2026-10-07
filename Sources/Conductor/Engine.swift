@@ -69,10 +69,10 @@ final class Engine: @unchecked Sendable {
     }
 
     /// Sends every finished log and report the server hasn't got yet; see LogUploader. Nothing
-    /// happens in a build without a server.
+    /// happens in a build without a server, or with uploads turned off in Settings > Data.
     @MainActor
     func uploadLogs() {
-        guard let logUploader else { return }
+        guard let logUploader, preferences.settings.uploadLogs else { return }
         camera.queue.async { [self] in logUploader.sweep(excluding: gestureLog?.url) }
     }
 
@@ -92,11 +92,12 @@ final class Engine: @unchecked Sendable {
         }
     }
 
-    /// Camera queue. Closes the file, sends what's finished, and keeps the folder bounded.
+    /// Camera queue. Closes the file, sends what's finished (unless uploads are off), and keeps
+    /// the folder bounded.
     private func closeLog() {
         gestureLog = nil
         loggedSetup = nil
-        if let logUploader {
+        if let logUploader, prefs.uploadLogs {
             logUploader.sweep() // ends with a prune
         } else {
             DispatchQueue.global(qos: .utility).async { GestureLog.prune() }

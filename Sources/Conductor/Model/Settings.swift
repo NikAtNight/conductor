@@ -26,6 +26,9 @@ struct Settings: Codable, Equatable, Sendable {
     var showCursorRing = true
     var showHandMap = false
     var soundCues = false
+    /// Send finished gesture logs and check reports to the developer (see LogUploader). Off keeps
+    /// them on this Mac.
+    var uploadLogs = true
     var pointerMode = PointerMode.absolute
     var trackpadSpeed = 1.0
     /// How far slow moves carry the cursor in the absolute mode, as a fraction. 1 turns it off.
