@@ -143,7 +143,7 @@ hold. Fingers that look curled or a palm turned edge-on still cannot start a cro
 - Trackpad mode. Settings > Tracking: the cursor moves by hand travel with acceleration instead of
   sitting where your hand is.
 - Push-to-talk. "Hold a key" holds any key while a gesture is held. Settings > Gestures has a
-  one-click setup that holds Right ⌘ for Walkie.
+  one-click setup that holds Right ⌘ for Flo.
 
 ## Build and run
 

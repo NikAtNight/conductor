@@ -47,7 +47,7 @@ final class HoldKeyTests: XCTestCase {
         XCTAssertEqual(actions, [.keyDown(rightCommand), .keyUp(rightCommand)])
     }
 
-    func testRightCommandCarriesTheDeviceBitWalkieChecks() {
+    func testRightCommandCarriesTheDeviceBitFloChecks() {
         let down = InputController.flags(for: rightCommand, down: true)
         XCTAssertTrue(down.contains(.maskCommand))
         XCTAssertTrue(down.contains(CGEventFlags(rawValue: 0x10)), "NX_DEVICERCMDKEYMASK")
