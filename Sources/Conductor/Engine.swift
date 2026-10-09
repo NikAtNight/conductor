@@ -32,6 +32,8 @@ final class Engine: @unchecked Sendable {
     private var pipeline: FramePipeline
     private var prefs: Settings
     private var gestureLog: GestureLog?
+    /// Logs stay owned until their workers finish, even after tracking stops or rotates them.
+    private var finalizingLogs: [GestureLog] = []
     /// The setup line the current log has, so a refresh only writes one when something changed.
     private var loggedSetup: GestureLog.Setup?
     /// The latest setup from the main actor, for the next log to open with.
@@ -69,15 +71,16 @@ final class Engine: @unchecked Sendable {
         GestureLog.recoverInterruptedLogs()
     }
 
-    /// Explicit runtime dependencies let lifecycle tests use fake input without camera or log startup.
+    /// Explicit runtime dependencies keep lifecycle tests away from live camera and user logs.
     @MainActor
     init(state: TrackingState, preferences: Preferences, input: InputScheduler,
-         pipeline: FramePipeline, logUploader: LogUploader? = nil) {
+         pipeline: FramePipeline, logUploader: LogUploader? = nil, gestureLog: GestureLog? = nil) {
         self.state = state
         self.preferences = preferences
         self.input = input
         self.pipeline = pipeline
         self.logUploader = logUploader
+        self.gestureLog = gestureLog
         prefs = preferences.settings
         logUploader?.setEnabled(prefs.uploadLogs)
         camera.onFrame = { [weak self] buffer in self?.process(buffer) }
@@ -126,10 +129,19 @@ final class Engine: @unchecked Sendable {
         let finish: @Sendable () -> Void = {
             if let log { Self.reportLogFailure(log) }
             if let uploader { uploader.sweep() }
-            else { GestureLog.prune() }
+            else { GestureLog.prune(directory: log?.url.deletingLastPathComponent() ?? GestureLog.directory) }
         }
-        if let log { log.finish(completion: finish) }
-        else { DispatchQueue.global(qos: .utility).async(execute: finish) }
+        if let log {
+            finalizingLogs.append(log)
+            log.finish { [weak self] in
+                self?.camera.queue.async { [weak self] in
+                    self?.finalizingLogs.removeAll { $0 === log }
+                }
+                finish()
+            }
+        } else {
+            DispatchQueue.global(qos: .utility).async(execute: finish)
+        }
     }
 
     private static func reportLogFailure(_ log: GestureLog) {
@@ -245,11 +257,14 @@ final class Engine: @unchecked Sendable {
         input.stop()
         samplingOwner.cancel()
         camera.queue.sync {
-            if let gestureLog {
-                gestureLog.finishAndWait()
-                Self.reportLogFailure(gestureLog)
-            }
+            let logs = finalizingLogs + (gestureLog.map { [$0] } ?? [])
             gestureLog = nil
+            finalizingLogs = []
+            loggedSetup = nil
+            for log in logs {
+                log.finishAndWait()
+                Self.reportLogFailure(log)
+            }
         }
         camera.stop()
     }
@@ -403,12 +418,14 @@ final class Engine: @unchecked Sendable {
     @MainActor
     func stopSampling(_ token: UUID) {
         guard samplingOwner.release(token) else { return }
-        input.setSampling(false)
         if state.isRunning { snapshots.start() }
         camera.queue.async { [self] in
             guard sampling == nil || sampling?.token == token else { return }
             sampling = nil
             pipeline.reset()
+            // Keep queued frames muted through the reset. Check ownership on the input queue
+            // so a newer claim's setSampling(true) cannot be undone by this cleanup.
+            input.setSampling(false, if: { !samplingOwner.isOccupied })
         }
     }
 

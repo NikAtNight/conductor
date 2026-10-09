@@ -35,7 +35,12 @@ final class LookReplayTests: XCTestCase {
     }
 
     private func pitches(_ base: Double) -> [[Double]] {
-        (0..<5).map { dot in (0..<6).map { base + Double(dot) * 0.5 + Double($0) * 0.2 } }
+        (0..<5).map { dot in
+            let start = base + Double(dot) * 0.5
+            return (0..<6).map { sample in
+                start + Double(sample) * 0.2
+            }
+        }
     }
 
     func testAReplayRefitsThePassAndMatchesTheLoggedScore() throws {

@@ -115,9 +115,9 @@ final class InputScheduler: @unchecked Sendable {
     }
 
     @discardableResult
-    func setSampling(_ active: Bool) -> Bool {
+    func setSampling(_ active: Bool, if shouldChange: () -> Bool = { true }) -> Bool {
         queue.sync {
-            guard running, !stalled else { return false }
+            guard running, !stalled, shouldChange() else { return false }
             guard sampling != active else { return true }
             generation &+= 1
             sampling = active
@@ -203,11 +203,11 @@ final class InputScheduler: @unchecked Sendable {
         }
         lastTick = now
         if let point = glide.position(at: now) { sink.send(.move(point)) }
-        if !glide.isGliding { stopGlide() }
+        if !glide.isGliding { stopGlide(preservingCadence: true) }
     }
 
-    private func stopGlide() {
-        glide.stop()
+    private func stopGlide(preservingCadence: Bool = false) {
+        if !preservingCadence { glide.stop() }
         glideTimer?.cancel()
         glideTimer = nil
         lastTick = nil

@@ -18,6 +18,90 @@ final class InputSchedulerTests: XCTestCase {
         InputScheduler(sink: sink, clock: { clock.now }, cursor: { nil }, automaticTimers: false)
     }
 
+    func testCompletedGlidesPreserveSlowCameraCadence() throws {
+        for framesPerSecond in [15, 20] {
+            let sink = Sink(), clock = Clock()
+            let input = scheduler(sink, clock)
+            input.start { _ in XCTFail("unexpected stall") }
+            defer { input.stop() }
+            let frameDuration = 1.0 / Double(framesPerSecond)
+            let ticksPerFrame = Int(CursorGlide.rate) / framesPerSecond
+
+            for frame in 0..<4 {
+                let frameStart = Double(frame) * frameDuration
+                clock.now = frameStart
+                let token = try XCTUnwrap(input.beginFrame())
+                input.submit([.move(CGPoint(x: Double(frame + 1) * 100, y: 0))], generation: token)
+                input.flush()
+
+                for tick in 1...ticksPerFrame {
+                    clock.now = frameStart + Double(tick) / CursorGlide.rate + 1e-9
+                    input.tick()
+                    if frame > 0 {
+                        let expected = Double(frame) * 100 + Double(tick) * 100 / Double(ticksPerFrame)
+                        XCTAssertEqual(sink.location.x, expected, accuracy: 0.01,
+                                       "\(framesPerSecond) fps frame \(frame), tick \(tick)")
+                    }
+                }
+                XCTAssertEqual(sink.location.x, Double(frame + 1) * 100, accuracy: 0.01)
+            }
+        }
+    }
+
+    func testCancellingGlideResetsCameraCadence() throws {
+        for cancellation in ["mouse down", "release", "sampling", "stop", "stall"] {
+            let sink = Sink(), clock = Clock()
+            let input = scheduler(sink, clock)
+            var stalledToken: UInt64?
+            input.start { stalledToken = $0 }
+            defer { input.stop() }
+
+            var token = try XCTUnwrap(input.beginFrame())
+            input.submit([.move(CGPoint(x: 100, y: 0))], generation: token)
+            input.flush()
+            clock.now = CursorGlide.defaultFrame + 1e-9
+            input.tick()
+            clock.now = 1.0 / 15
+            token = try XCTUnwrap(input.beginFrame())
+            input.submit([.move(CGPoint(x: 200, y: 0))], generation: token)
+            input.flush()
+            clock.now += 1.0 / CursorGlide.rate
+            input.tick()
+
+            switch cancellation {
+            case "mouse down":
+                input.submit([.leftDown(clickCount: 1)], generation: token)
+            case "release":
+                input.submit([.releaseAll], generation: token)
+            case "sampling":
+                XCTAssertTrue(input.setSampling(true))
+                XCTAssertTrue(input.setSampling(false))
+            case "stop":
+                input.stop()
+                input.start { _ in XCTFail("unexpected stall after restart") }
+            default:
+                clock.now += 1.1
+                input.checkStall()
+                input.resumeAfterStall(try XCTUnwrap(stalledToken))
+            }
+            input.flush()
+
+            clock.now += 0.01
+            let start = sink.location.x
+            let target = start + 100
+            let targetTime = clock.now
+            token = try XCTUnwrap(input.beginFrame())
+            input.submit([.move(CGPoint(x: target, y: 0))], generation: token)
+            input.flush()
+            clock.now = targetTime + CursorGlide.defaultFrame / 2
+            input.tick()
+            XCTAssertEqual(sink.location.x, start + 50, accuracy: 0.01, cancellation)
+            clock.now = targetTime + CursorGlide.defaultFrame + 1e-9
+            input.tick()
+            XCTAssertEqual(sink.location.x, target, accuracy: 0.01, cancellation)
+        }
+    }
+
     func testOrderedCommandsStopGlideBeforeMouseDownAndRelease() throws {
         let sink = Sink(), clock = Clock()
         let input = scheduler(sink, clock)

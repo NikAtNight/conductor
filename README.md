@@ -349,6 +349,8 @@ On stop or hourly rotation the writer drains, closes, and renames the file to `.
 can an upload sweep see it. Startup recovers abandoned `.inprogress` files by removing an incomplete
 last line. File locks protect recordings still open in another app process. A write or finalization
 failure keeps the interrupted file for recovery and reports the error.
+On orderly quit, Conductor releases held input first, then waits for the current writer and any
+writers still draining after tracking stopped or a log rotated.
 
 Conductor also runs Vision's face request and logs your face: its box (the height
 is a distance gauge), head roll, yaw and pitch in degrees (pitch positive looking down), Vision's
@@ -557,6 +559,9 @@ Unchanged scalar values are not published again. Gesture events and calibration 
 own ordered delivery so dropping an old preview cannot drop an action or sample.
 `SamplingOwnership` gives reach calibration, look calibration, and gesture check one exclusive
 owner. Stale completion tokens cannot end a newer run, and stopping tracking cancels the owner.
+Ending sampling keeps input muted until the camera queue resets the recognizer. A newer sampling
+owner keeps input muted when an older cleanup finishes. Cursor glides retain the measured frame
+interval after reaching a target; explicit input cancellation clears that timing history.
 
 A fist leaving scroll mode activates its configured binding. Look-based display selection stays
 locked while scroll mode is active. Input timing notes record tick intervals and frame-to-input
@@ -589,6 +594,9 @@ while the camera queue is blocked, stale generations, ordered command completion
 `EngineLifecycleTests` drives the real Engine with a blocked camera queue and fake input. It checks
 early cancellation with held keys/drags, protection of a replacement owner, queued callbacks during
 restart, and sampling claimed before initialization finishes.
+It also checks frames queued before sampling cleanup, including clicks and held input.
+`EngineLogLifecycleTests` checks that shutdown releases input before waiting for blocked writers
+and drains recordings that were already closing when tracking stopped.
 `GestureLogTests`, `LogUploaderTests`, and `LogUploadHTTPTests` cover writer pressure, close/rename
 visibility, crash recovery, opt-out, response bounds, and cancellation through URLSession.
 `CameraCaptureTests` and `PixelAnalysisTests` check format selection, row strides and pixel ranges.
@@ -616,9 +624,20 @@ Local verification on October 8, 2026, macOS arm64, Swift 6.4 and Node 22.23.2, 
 The evidence files are local temporary artifacts. The test commands and regression suites remain
 in the repository.
 
+Follow-up verification on the same environment, base `fb02dda` plus
+`/tmp/conductor-review-fixes.patch`, passed `swift test --force-resolved-versions` with 387 tests,
+two optional skips and zero failures, and `swift build -c release --force-resolved-versions`.
+Evidence is in `/tmp/conductor-review-fixes-tests.log` and
+`/tmp/conductor-review-fixes-release-build.log`. The sampling, cursor cadence and log shutdown
+regressions each failed before their fix and passed afterward. The seven Worker tests, TypeScript
+check and dependency audit also passed, with zero vulnerabilities.
+
 Live camera accuracy, YUV/BGRA end-to-end timing, Accessibility input, and cursor feel remain
-unverified. The CI workflow has been checked locally but has not run on GitHub. No app installation
-or server deployment is part of this update.
+unverified. The merged commit's [GitHub CI run](https://github.com/dev-talix/conductor/actions/runs/37877316665)
+passed the application build and Worker checks, but Swift tests failed to compile the nested
+expression in `LookReplayTests.pitches`. The follow-up splits that expression into smaller parts;
+GitHub CI still needs to run against those changes. No app installation or server deployment is
+part of this update.
 
 ```
 Sources/Conductor/

@@ -23,12 +23,12 @@ final class EngineLifecycleTests: XCTestCase {
         let defaults: UserDefaults
         var time: TimeInterval = 0
 
-        init(binding: GestureAction) throws {
+        init(binding: GestureAction, fistBinding: GestureAction = .rightClick) throws {
             defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
             let prefs = Preferences(defaults: defaults)
             prefs.settings.requireReadyPose = false
             prefs.settings.gestureMap[.indexPinch] = binding
-            prefs.settings.gestureMap[.fist] = .rightClick
+            prefs.settings.gestureMap[.fist] = fistBinding
             var pipeline = FramePipeline(prefs.settings)
             _ = pipeline.apply(prefs.settings, map: prefs.settings.gestureMap,
                                displays: [CGRect(x: 0, y: 0, width: 1000, height: 1000)], cameraMount: nil)
@@ -117,6 +117,76 @@ final class EngineLifecycleTests: XCTestCase {
         runtime.engine.camera.queue.sync {}
         runtime.frame(PoseFixtures.pinched())
         XCTAssertEqual(runtime.sink.commands.filter { $0 == .keyDown(key) }.count, 2)
+    }
+
+    func testSamplingStopRejectsQueuedClickAndHeldInputBeforeReset() async throws {
+        let key = Shortcut(keyCode: 49, modifiers: 0)
+        for (binding, forbidden) in [(GestureAction.rightClick, InputCommand.rightClick),
+                                     (.holdKey(key), .keyDown(key)),
+                                     (.leftButton, .leftDown(clickCount: 1))] {
+            let runtime = try Runtime(binding: .leftButton, fistBinding: binding)
+            defer { runtime.finish() }
+            let started = await runtime.engine.startHandSampling(onCancelled: {}) { _ in }
+            let token = try XCTUnwrap(started)
+            runtime.engine.camera.queue.sync {}
+            runtime.input.flush()
+            let countBeforeStop = runtime.sink.commands.filter { $0 == forbidden }.count
+            let unblock = await blockCamera(runtime.engine)
+            let engine = runtime.engine, input = runtime.input
+            engine.camera.queue.async {
+                guard let generation = input.beginFrame() else { return }
+                engine.processTrackedFrame(hands: [PoseFixtures.fist()], at: 2, generation: generation)
+            }
+            runtime.engine.stopSampling(token)
+            unblock.signal()
+            engine.camera.queue.sync {}
+            input.flush()
+            XCTAssertEqual(runtime.sink.commands.filter { $0 == forbidden }.count, countBeforeStop,
+                           "a callback queued before sampling cleanup cannot send input")
+            runtime.frame(PoseFixtures.fist())
+            XCTAssertEqual(runtime.sink.commands.filter { $0 == forbidden }.count, countBeforeStop + 1,
+                           "input must resume after resetting the recognizer")
+        }
+    }
+
+    func testSamplingStopCleanupKeepsNewOwnerMuted() async throws {
+        let runtime = try Runtime(binding: .leftButton)
+        defer { runtime.finish() }
+        let firstStart = await runtime.engine.startHandSampling(onCancelled: {}) { _ in }
+        let first = try XCTUnwrap(firstStart)
+        runtime.engine.camera.queue.sync {}
+        let unblock = await blockCamera(runtime.engine)
+        runtime.engine.stopSampling(first)
+        let secondStart = await runtime.engine.startLookSampling(onCancelled: {}) { _ in }
+        let second = try XCTUnwrap(secondStart)
+        unblock.signal()
+        runtime.engine.camera.queue.sync {}
+        let generation = try XCTUnwrap(runtime.input.beginFrame())
+        runtime.input.submit([.rightClick], generation: generation)
+        runtime.input.flush()
+        XCTAssertFalse(runtime.sink.commands.contains(.rightClick), "cleanup cannot unmute a newer owner")
+        runtime.engine.stopSampling(second)
+        runtime.engine.camera.queue.sync {}
+        runtime.frame(PoseFixtures.fist())
+        XCTAssertEqual(runtime.sink.commands.filter { $0 == .rightClick }.count, 1)
+    }
+
+    func testSamplingStopCleanupDoesNotPreventWatchdogRecovery() async throws {
+        let runtime = try Runtime(binding: .leftButton)
+        defer { runtime.finish() }
+        let started = await runtime.engine.startHandSampling(onCancelled: {}) { _ in }
+        let token = try XCTUnwrap(started)
+        runtime.engine.camera.queue.sync {}
+        let unblock = await blockCamera(runtime.engine)
+        runtime.engine.stopSampling(token)
+        runtime.clock.now = 10
+        runtime.input.checkStall()
+        XCTAssertNil(runtime.input.beginFrame())
+        unblock.signal()
+        runtime.engine.camera.queue.sync {}
+        XCTAssertNotNil(runtime.input.beginFrame(), "watchdog recovery must admit frames after resetting")
+        runtime.frame(PoseFixtures.fist())
+        XCTAssertEqual(runtime.sink.commands.filter { $0 == .rightClick }.count, 1)
     }
 
     func testRestartRejectsOldQueuedCallbacksUntilPipelineReset() async throws {
