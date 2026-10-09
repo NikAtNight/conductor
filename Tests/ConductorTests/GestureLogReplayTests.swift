@@ -16,6 +16,7 @@ final class GestureLogReplayTests: XCTestCase {
         log.write(time: Date(timeIntervalSince1970: 100.033), fps: 30, hands: [], primary: nil,
                   output: GestureRecognizer.Output(mode: .idle, pointer: nil, actions: [], label: "No hand"),
                   cursor: nil, sinceLastMs: 33, detectMs: 4, processMs: 10)
+        log.finishAndWait()
         let frames = try GestureLogReplay.frames(in: log.url)
         XCTAssertEqual(frames.count, 2)
         XCTAssertEqual(frames[0].time, 100)

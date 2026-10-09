@@ -12,7 +12,7 @@ enum Gzip {
 
     private static let chunk = 1 << 20
 
-    static func compress(_ source: URL, to destination: URL) throws {
+    static func compress(_ source: URL, to destination: URL, isCancelled: () -> Bool = { false }) throws {
         let input = try FileHandle(forReadingFrom: source)
         defer { try? input.close() }
         FileManager.default.createFile(atPath: destination.path, contents: nil)
@@ -29,6 +29,7 @@ enum Gzip {
         var out = [UInt8](repeating: 0, count: chunk)
         var finished = false
         while !finished {
+            if isCancelled() { throw CancellationError() }
             var data = try input.read(upToCount: chunk) ?? Data()
             let flush = data.isEmpty ? Z_FINISH : Z_NO_FLUSH
             try data.withUnsafeMutableBytes { (bytes: UnsafeMutableRawBufferPointer) in

@@ -10,7 +10,7 @@ import Foundation
 /// being written. A file counts as sent only once the server accepts it, so a failed or
 /// interrupted upload is tried again on the next sweep. Logs are gzipped on the way (about ten
 /// times smaller); reports go as they are. All of it runs on its own queue, never the camera's,
-/// which is why it's `@unchecked Sendable`: the only mutable state is the sent list in UserDefaults.
+/// A lock protects opt-in state and cancellation; the worker owns the sent list in UserDefaults.
 final class LogUploader: @unchecked Sendable {
     struct Config: Equatable {
         var url: URL
@@ -64,18 +64,26 @@ final class LogUploader: @unchecked Sendable {
     private let directory: URL
     private let defaults: UserDefaults
     private let version: String?
-    private let send: Send
+    private let send: Send?
+    private let httpConfiguration: URLSessionConfiguration?
+    private let control = NSLock()
+    private var enabled = true
+    private var generation: UInt64 = 0
+    private var activeHTTP: LogUploadHTTP?
+    private var pendingSweep: (generation: UInt64, active: URL?)?
+    private var sweepScheduled = false
     /// Serial; tests block on it to wait for a sweep.
     let queue = DispatchQueue(label: "conductor.log-upload", qos: .utility)
 
     init(config: Config, directory: URL = GestureLog.directory, defaults: UserDefaults = .standard,
          version: String? = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
-         send: Send? = nil) {
+         httpConfiguration: URLSessionConfiguration? = nil, send: Send? = nil) {
         self.config = config
         self.directory = directory
         self.defaults = defaults
         self.version = version
-        self.send = send ?? Self.httpSend()
+        self.send = send
+        self.httpConfiguration = httpConfiguration
         installID = Self.installID(in: defaults)
     }
 
@@ -88,57 +96,104 @@ final class LogUploader: @unchecked Sendable {
         return id
     }
 
-    /// Sends every log and report in the folder that the server hasn't accepted yet, oldest
-    /// first, skipping `active` (the log still being written), then prunes the folder (see
-    /// GestureLog.prune). Returns at once; the work queues.
+    /// Takes effect before returning, even while the upload queue is blocked on a request.
+    /// Disabling invalidates queued sweeps; enabling needs a fresh sweep to resume work.
+    func setEnabled(_ enabled: Bool) {
+        control.lock()
+        if self.enabled != enabled {
+            self.enabled = enabled
+            generation &+= 1
+            pendingSweep = nil
+        }
+        let active = enabled ? nil : activeHTTP
+        control.unlock()
+        active?.cancel()
+    }
+
+    /// Coalesces requested sweeps so repeated requests cannot build an unbounded backlog.
     func sweep(excluding active: URL? = nil) {
-        queue.async { [self] in
-            let files = ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
-                .sorted { $0.lastPathComponent < $1.lastPathComponent }
-            // Files the user deleted drop out of the list so it doesn't grow forever.
-            let present = Set(files.map(\.lastPathComponent))
-            let stored = defaults.stringArray(forKey: Self.sentKey) ?? []
-            var sent = Set(stored).intersection(present)
-            // Saved after every accepted file, not once at the end: a quit mid-sweep shouldn't
-            // send a recording twice.
-            func save() { defaults.set(Array(sent).sorted(), forKey: Self.sentKey) }
-            if sent.count != stored.count { save() }
-            for file in files {
-                let name = file.lastPathComponent
-                guard file.standardizedFileURL != active?.standardizedFileURL, !sent.contains(name),
-                      let kind = Kind(fileName: name) else { continue }
-                switch upload(file, as: kind) {
-                case .accepted:
-                    sent.insert(name)
-                    save()
-                case .failed(let reason):
-                    NSLog("Conductor: upload of \(name) failed: \(reason)")
-                }
+        control.lock()
+        guard enabled else { control.unlock(); return }
+        pendingSweep = (generation, active)
+        if !sweepScheduled {
+            sweepScheduled = true
+            queue.async { [self] in drainSweeps() }
+        }
+        control.unlock()
+    }
+
+    private func authorized(_ expected: UInt64) -> Bool {
+        control.lock(); defer { control.unlock() }
+        return enabled && generation == expected
+    }
+
+    private func drainSweeps() {
+        while true {
+            control.lock()
+            guard let sweep = pendingSweep else {
+                sweepScheduled = false
+                control.unlock()
+                return
             }
-            GestureLog.prune(directory: directory, excluding: active)
+            pendingSweep = nil
+            control.unlock()
+            guard authorized(sweep.generation) else { continue }
+            performSweep(excluding: sweep.active, generation: sweep.generation)
         }
     }
 
-    private func upload(_ file: URL, as kind: Kind) -> Outcome {
+    private func performSweep(excluding active: URL?, generation: UInt64) {
+        let files = ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        let present = Set(files.map(\.lastPathComponent))
+        let stored = defaults.stringArray(forKey: Self.sentKey) ?? []
+        var sent = Set(stored).intersection(present)
+        func save() { defaults.set(Array(sent).sorted(), forKey: Self.sentKey) }
+        if sent.count != stored.count { save() }
+        for file in files {
+            guard authorized(generation) else { return }
+            let name = file.lastPathComponent
+            guard file.standardizedFileURL != active?.standardizedFileURL, !sent.contains(name),
+                  let kind = Kind(fileName: name) else { continue }
+            let outcome = upload(file, as: kind, generation: generation)
+            // An opt-out while a request was running must not record that request as accepted.
+            guard authorized(generation) else { return }
+            switch outcome {
+            case .accepted:
+                control.lock()
+                guard enabled && self.generation == generation else { control.unlock(); return }
+                sent.insert(name)
+                save()
+                control.unlock()
+            case .failed(let reason):
+                NSLog("Conductor: upload of \(name) failed: \(reason)")
+            }
+        }
+        guard authorized(generation) else { return }
+        GestureLog.prune(directory: directory, excluding: active)
+    }
+
+    private func upload(_ file: URL, as kind: Kind, generation: UInt64) -> Outcome {
         var body = file
         var name = file.lastPathComponent
         var contentType = "application/json"
+        defer { if body != file { try? FileManager.default.removeItem(at: body) } }
         if kind == .recordings {
             body = FileManager.default.temporaryDirectory.appending(path: "\(name).\(UUID().uuidString).gz")
             name += ".gz"
             contentType = "application/gzip"
             do {
-                try Gzip.compress(file, to: body)
+                try Gzip.compress(file, to: body, isCancelled: { !self.authorized(generation) })
             } catch {
                 return .failed("\(error)")
             }
         }
-        defer { if body != file { try? FileManager.default.removeItem(at: body) } }
         let size = (try? body.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         if size > Self.maxBytes {
             NSLog("Conductor: \(name) is \(size >> 20) MB gzipped, over the \(Self.maxBytes >> 20) MB upload limit; not sending it")
             return .accepted
         }
+        guard authorized(generation) else { return .failed("cancelled") }
         guard let digest = try? Self.sha256(of: body) else { return .failed("couldn't read \(name) to checksum it") }
         var request = URLRequest(url: config.url.appending(path: "\(kind.rawValue)/\(name)"))
         request.httpMethod = "PUT"
@@ -150,7 +205,23 @@ final class LogUploader: @unchecked Sendable {
         request.setValue(installID, forHTTPHeaderField: "X-Conductor-Install")
         if let version { request.setValue(version, forHTTPHeaderField: "X-Conductor-Version") }
         request.setValue(ProcessInfo.processInfo.operatingSystemVersionString, forHTTPHeaderField: "X-Conductor-OS")
-        return send(request, body)
+        if let send {
+            guard authorized(generation) else { return .failed("cancelled") }
+            return send(request, body)
+        }
+        let configuration = httpConfiguration ?? URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 60
+        configuration.timeoutIntervalForResource = 30 * 60
+        let transport = LogUploadHTTP(configuration: configuration)
+        control.lock()
+        guard enabled && self.generation == generation else { control.unlock(); return .failed("cancelled") }
+        activeHTTP = transport
+        control.unlock()
+        let outcome = transport.send(request, file: body)
+        control.lock()
+        activeHTTP = nil
+        control.unlock()
+        return outcome
     }
 
     /// Hex SHA-256 of a file, read in pieces.
@@ -160,38 +231,5 @@ final class LogUploader: @unchecked Sendable {
         var hasher = SHA256()
         while let data = try handle.read(upToCount: 1 << 20), !data.isEmpty { hasher.update(data: data) }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
-    }
-
-    /// Uploads over HTTP and blocks the upload queue until the server answers; one file at a time
-    /// is the point.
-    private static func httpSend() -> Send {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 60
-        configuration.timeoutIntervalForResource = 30 * 60
-        let session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
-        return { request, file in
-            let done = DispatchSemaphore(value: 0)
-            var outcome = Outcome.failed("no response")
-            session.uploadTask(with: request, fromFile: file) { data, response, error in
-                if let error {
-                    outcome = .failed(error.localizedDescription)
-                } else if let http = response as? HTTPURLResponse {
-                    let text = data.flatMap { String(data: $0.prefix(200), encoding: .utf8) } ?? ""
-                    outcome = (200..<300).contains(http.statusCode) ? .accepted : .failed("HTTP \(http.statusCode) \(text)")
-                }
-                done.signal()
-            }.resume()
-            done.wait()
-            return outcome
-        }
-    }
-
-    /// The request carries the token, and a redirect would carry it to wherever the server said.
-    /// The server never redirects; one that does is not ours.
-    private final class NoRedirects: NSObject, URLSessionTaskDelegate {
-        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-            completionHandler(nil)
-        }
     }
 }

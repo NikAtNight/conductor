@@ -589,7 +589,8 @@ struct GestureRecognizer {
             let since = fistSince ?? time
             fistSince = since
             if time - since >= config.fistExitHold {
-                active = .fist
+                leaveScrollMode()
+                actions += activate(.fist, primary: primary, other: other, at: time)
                 return scrollModeLeft(actions: actions)
             }
             return output(.scrollMode, pointer: nil, actions: actions, label: "Scroll mode: hold the fist to leave")

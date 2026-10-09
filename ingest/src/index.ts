@@ -15,7 +15,7 @@ export interface Env {
 }
 
 /** The platform stops request bodies here too; the app skips a recording that gzips bigger. */
-export const MAX_BYTES = 100 * 1024 * 1024;
+const MAX_BYTES = 100 * 1024 * 1024;
 
 /** Only the names Conductor writes, so a stolen token can't fill the bucket with anything else. */
 const FILE_NAMES: Record<string, RegExp> = {
@@ -59,12 +59,18 @@ export default {
       if (value) customMetadata[field] = value.slice(0, METADATA_CHARS);
     }
     try {
-      // R2 checks the body against the checksum and refuses a mismatch.
-      await env.RECORDINGS.put(key, request.body, {
+      // R2 checks both the checksum and absence atomically, including concurrent first uploads.
+      const stored = await env.RECORDINGS.put(key, request.body, {
+        onlyIf: new Headers({ "If-None-Match": "*" }),
         sha256,
         httpMetadata: { contentType: request.headers.get("Content-Type") ?? "application/octet-stream" },
         customMetadata,
       });
+      if (!stored) {
+        const winner = await env.RECORDINGS.head(key);
+        if (!winner) return reply(503, "file changed during upload; retry");
+        return winner.checksums.toJSON().sha256 === sha256 ? reply(200, key) : reply(409, "a different file has that name");
+      }
     } catch (error) {
       return reply(400, `not stored: ${error instanceof Error ? error.message : String(error)}`);
     }

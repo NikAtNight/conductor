@@ -43,6 +43,40 @@ final class ScrollModeTests: XCTestCase {
         actions.removeAll()
     }
 
+    func testFistExitActivatesHoldKeyExactlyOnceAndReleasesIt() {
+        let key = Shortcut(keyCode: 54, modifiers: 0)
+        var map = GestureMap.standard
+        map[.crossedFingers] = .scrollMode
+        map[.fist] = .holdKey(key)
+        r = GestureRecognizer(config: .instant, map: map)
+        enterScrollMode()
+        frames(PoseFixtures.fist(), for: 0.7)
+        XCTAssertFalse(r.inScrollMode)
+        XCTAssertEqual(actions, [.keyDown(key)])
+        frames(PoseFixtures.openHand(), for: 0.1)
+        XCTAssertEqual(actions, [.keyDown(key), .keyUp(key)])
+    }
+
+    func testFistExitFiresEachOneShotBindingOnlyOnce() {
+        let key = Shortcut(keyCode: 49, modifiers: 0)
+        let cases: [(GestureAction, Action)] = [
+            (.rightClick, .rightClick), (.middleClick, .middleClick), (.shortcut(key), .shortcut(key)),
+            (.switchDisplay, .switchDisplay(toward: nil)),
+        ]
+        for (binding, expected) in cases {
+            var map = GestureMap.standard
+            map[.crossedFingers] = .scrollMode
+            map[.fist] = binding
+            r = GestureRecognizer(config: .instant, map: map)
+            t = 0
+            actions = []
+            enterScrollMode()
+            frames(PoseFixtures.fist(), for: 0.7)
+            XCTAssertFalse(r.inScrollMode)
+            XCTAssertEqual(actions, [expected], "binding: \(binding)")
+        }
+    }
+
     func testFingerCrossIsPositiveOnlyWhenCrossed() {
         XCTAssertLessThan(PoseFixtures.openHand().fingerCross!, 0)
         XCTAssertLessThan(PoseFixtures.twoFingers().fingerCross!, 0)

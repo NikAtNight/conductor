@@ -35,27 +35,18 @@ struct TrackingQuality {
         return nil
     }
 
-    /// Average luma of a BGRA frame, sampled on a coarse grid. Cheap enough to run every few frames.
+    /// Average luma on a coarse grid, normalized to 0...255 for either YUV range or BGRA.
     static func meanLuma(of buffer: CVPixelBuffer) -> Double? {
-        guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA else { return nil }
-        CVPixelBufferLockBaseAddress(buffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
-        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
-        let width = CVPixelBufferGetWidth(buffer)
-        let height = CVPixelBufferGetHeight(buffer)
-        let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
-        let pixels = base.assumingMemoryBound(to: UInt8.self)
-        var total = 0.0
-        var count = 0.0
-        for gy in 0..<12 {
-            let y = (gy * 2 + 1) * height / 24
-            for gx in 0..<16 {
-                let x = (gx * 2 + 1) * width / 32
-                let p = pixels + y * rowBytes + x * 4
-                total += 0.114 * Double(p[0]) + 0.587 * Double(p[1]) + 0.299 * Double(p[2])
-                count += 1
+        FramePixels.read(buffer) { pixels in
+            var total = 0.0
+            for gy in 0..<12 {
+                let y = (gy * 2 + 1) * pixels.height / 24
+                for gx in 0..<16 {
+                    let x = (gx * 2 + 1) * pixels.width / 32
+                    total += pixels.luma(x: x, y: y)
+                }
             }
+            return total / 192
         }
-        return total / count
     }
 }

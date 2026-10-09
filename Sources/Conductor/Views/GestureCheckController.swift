@@ -11,6 +11,8 @@ final class GestureCheckController {
     private var window: NSWindow?
     private var engine: Engine?
     private var run: Task<Void, Never>?
+    private var runID: UUID?
+    private var samplingToken: UUID?
     private var sampler: GestureCheck.Sampler?
     private var completion: ((GestureCheck.Report?) -> Void)?
     /// How often the countdown and live reading refresh.
@@ -26,6 +28,8 @@ final class GestureCheckController {
             completion(nil)
             return
         }
+        let runID = UUID()
+        self.runID = runID
         self.completion = completion
         self.engine = engine
         let steps = GestureCheck.allSteps(config: config)
@@ -33,15 +37,22 @@ final class GestureCheckController {
         open()
         run = Task { [weak self] in
             guard let self else { return }
-            let started = await engine.startHandSampling { [weak self] hands in self?.record(hands) }
-            guard started else {
-                finish(nil)
+            let token = await engine.startHandSampling(onCancelled: { [weak self] in
+                guard let self, self.runID == runID else { return }
+                self.cancel()
+            }) { [weak self] hands in
+                guard let self, self.runID == runID else { return }
+                self.record(hands)
+            }
+            guard let token else {
+                if self.runID == runID { finish(nil) }
                 return
             }
-            guard !Task.isCancelled else {
-                engine.stopSampling() // cancelled while the camera was starting
+            guard !Task.isCancelled, self.runID == runID else {
+                engine.stopSampling(token)
                 return
             }
+            samplingToken = token
             var results: [GestureCheck.Result] = []
             do {
                 for (index, step) in steps.enumerated() {
@@ -102,10 +113,13 @@ final class GestureCheckController {
     private func finish(_ report: GestureCheck.Report?) {
         guard let completion else { return }
         self.completion = nil
+        run?.cancel()
         run = nil
+        runID = nil
         sampler = nil
         engine?.logNote("gesture check: \(report == nil ? "cancelled" : "done, \(report!.results.count) results")")
-        engine?.stopSampling()
+        if let samplingToken { engine?.stopSampling(samplingToken) }
+        samplingToken = nil
         engine = nil
         if report != nil {
             model.done = true

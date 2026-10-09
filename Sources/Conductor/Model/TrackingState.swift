@@ -1,7 +1,8 @@
 import Foundation
 import Combine
 
-/// What the UI shows. Updated on the main actor from the camera pipeline.
+/// What the UI shows. Latest camera snapshots publish at 30 Hz on the main actor;
+/// clicks and control events are delivered separately so preview coalescing cannot drop them.
 @MainActor
 final class TrackingState: ObservableObject {
     @Published var hands: [HandPose] = []

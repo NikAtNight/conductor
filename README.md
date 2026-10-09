@@ -300,6 +300,13 @@ Settings > Camera picks the camera, or leaves it on Automatic. After a minute wi
 Conductor checks for one only a few times a second until a hand shows up again. If the picture is
 too dark or tracking keeps guessing, the preview and the menu say so.
 
+Capture prefers the camera's supported 420 YUV format, full range first, then video range, with
+BGRA as the fallback. Brightness and eye glare use the same pixel reader and normalize video-range
+luma before applying thresholds. Set `CONDUCTOR_CAMERA_BGRA=1` when launching a development build
+to compare capture formats on the same camera; each log notes its output format. Vision tracking
+quality and conversion cost still
+need a live comparison.
+
 ## Gesture check
 
 Check Gestures, in the menu bar menu, walks every gesture one hand at a time: the open hand, the
@@ -326,7 +333,7 @@ don't: run it again if you move the camera.
 
 ## Gesture log
 
-Every tracking session writes every camera frame to a new file in `~/Library/Logs/Conductor/`
+Every tracking session queues camera frames for a new file in `~/Library/Logs/Conductor/`
 (Settings > Data > Show Logs opens the folder), split into a new file each hour. Each line is one JSON object: a
 timestamp, every hand joint Vision found with its confidence, the measurements the recognizer
 decides with (pinch distances, index lift and visible length, finger cross, fist and pointing checks), the mode,
@@ -335,15 +342,25 @@ in Vision, time for the whole frame). Camera stalls and settings refreshes get t
 grows by a few megabytes a minute while a hand is in view; the folder keeps a week or 1 GB of logs
 and reports, whichever comes first, oldest deleted first, and the file being written is never touched.
 
+The active file ends in `.jsonl.inprogress`. A utility worker encodes and writes records in order,
+with at most 256 waiting records. If storage falls behind, it drops records and reports the count
+instead of blocking camera processing. A settings setup line takes priority over a waiting frame.
+On stop or hourly rotation the writer drains, closes, and renames the file to `.jsonl`; only then
+can an upload sweep see it. Startup recovers abandoned `.inprogress` files by removing an incomplete
+last line. File locks protect recordings still open in another app process. A write or finalization
+failure keeps the interrupted file for recovery and reports the error.
+
 Conductor also runs Vision's face request and logs your face: its box (the height
 is a distance gauge), head roll, yaw and pitch in degrees (pitch positive looking down), Vision's
 landmark confidence, and for each eye the pupil, where it sits inside the eye opening, how open the
 eye is, and a glare figure (the share of near-white pixels over the eye, which climbs when a screen
 reflects in glasses). For the log alone the face is read on every sixth frame, since head angles and
 distance change slowly and the face request costs more than the hands; in the "Display you're
-looking at" mode it's every other frame, and during look calibration every frame. Frames in between
-log no face. While the face is being read, the preview draws the face box, eye
-outlines and pupils in cyan and shows the head angles next to the frame rate.
+looking at" mode head pose is read every other frame, and during look calibration every frame.
+Eye landmarks and glare are computed only on every sixth diagnostic frame during normal tracking.
+Calibration uses head pose alone. Frames between face requests log no face. The preview keeps the
+last diagnostic eye outline while updating head angles and the face box. YUV glare uses bright luma
+and neutral chroma as an approximation of the BGRA near-white check.
 
 Look calibration frames are logged too, with the label "Calibrating look". A note marks when each
 dot starts and stops being sampled, naming the display, and a last note holds the fitted pass and
@@ -397,7 +414,9 @@ to the upload server, so recordings from more than one Mac can be tuned against 
 by default and Settings > Data > "Send logs to the developer" turns it off; the log itself isn't a
 setting, since it's how tracking gets tuned. Settings > Data says exactly what it holds and what it
 never does (no camera images or video, nothing typed, no app names, nothing that names the person
-or the Mac). A build with no server keeps the logs local, and so does turning it off. What goes is the
+or the Mac). Turning it off cancels the active request and discards queued upload sweeps. Turning
+it back on allows subsequent sweeps; Upload Now requests one immediately. Bytes already accepted by the server remain there. A build with
+no server keeps the logs local, and so does turning it off. What goes is the
 file on disk and nothing more: the log gzipped (about a tenth the size), the report as it is. The
 first time, the app makes itself a random install ID, kept in its preferences, and sends it with
 every file and in every log's setup line, so one Mac's recordings sit together without naming
@@ -410,7 +429,8 @@ Uploads happen when tracking stops, once an hour while it runs (the log is split
 gesture check saves its report, from Settings > Data > Upload Now, and at launch for anything left
 over (a quit mid-recording, a Mac that was offline). A file
 counts as sent only once the server has it, so a failed upload is tried again at the next of those
-moments, and the server keeps the first copy if the same file arrives twice. A recording that gzips
+moments, and the server keeps the first copy with an atomic conditional R2 write, including
+concurrent uploads. A recording that gzips
 past 100 MB is skipped, which the hourly split should keep from ever happening. The gzip and the
 upload run on their own queue, never the camera's, and the local files stay until the folder's week
 or 1 GB runs out. Settings > Data also shows this Mac's install ID, to quote in a bug report.
@@ -513,14 +533,37 @@ background. A lamp in front of you beats a bright window behind you.
 ## Development
 
 ```sh
-swift build
-swift test
+swift build --force-resolved-versions
+swift test --force-resolved-versions
 ```
+
+The checked-in `Package.resolved` pins Sparkle for reproducible builds. `.github/workflows/ci.yml`
+runs the pinned Swift build and tests on macOS, plus `npm ci`, the Worker tests, TypeScript checking,
+and the dependency audit in `ingest/` on Node 22. The workflow runs on pushes and pull requests.
 
 Gesture recognition, smoothing, and screen mapping are plain Swift with no camera dependency, so
 they are unit tested with synthesized hand poses in `Tests/ConductorTests`.
 
-The gesture path is `Engine` → `FramePipeline` → `GestureRecognizer.update` → input commands.
+The gesture path is `Engine` → `FramePipeline` → `GestureRecognizer.update` → `InputScheduler`
+→ `InputController`. The input scheduler owns a separate serial queue for commands, the 120 Hz
+cursor glide, and the stall watchdog. A camera or Vision stall cannot prevent it from releasing
+held input. Generation tokens reject commands from frames that finish after stop, restart, or
+watchdog recovery. Restart admits frames only after its camera-queue reset, so callbacks queued
+before stop cannot use the new generation against old recognizer state. Clicks and releases stop
+the glide before posting.
+
+`LatestSnapshot` keeps one pending preview update, published on the main actor at up to 30 Hz.
+Unchanged scalar values are not published again. Gesture events and calibration samples use their
+own ordered delivery so dropping an old preview cannot drop an action or sample.
+`SamplingOwnership` gives reach calibration, look calibration, and gesture check one exclusive
+owner. Stale completion tokens cannot end a newer run, and stopping tracking cancels the owner.
+
+A fist leaving scroll mode activates its configured binding. Look-based display selection stays
+locked while scroll mode is active. Input timing notes record tick intervals and frame-to-input
+queue delay. Camera drop notes include the capture reason. Periodic writer notes record enqueue,
+encoding and write times, queue backlog, and drop/failure counts. These measurements locate delays
+but do not by themselves establish a speedup.
+
 `HandPose` supplies the geometry. Regression tests for the October 6 recordings are in
 `PinchRobustnessTests`, `SwipeTests`, and `ScrollModeTests`: a folded thumb must not start push-to-talk
 while two fingers are forming, short horizontal flicks must swipe without vertical drift doing so,
@@ -538,18 +581,49 @@ swift test --filter 'PinchRobustnessTests|SwipeTests|ScrollModeTests|GestureChec
 These tests and the log replay check recognition and emitted actions. Comfort, intended swipe
 direction, and camera tracking after a rebuild still need a live trial.
 
-Local verification on October 6, 2026, macOS arm64: `swift test` passed 286 tests with two optional
-log tests skipped. All 12 recordings with frame data replayed using the push-to-talk map; one empty
-recording was skipped. The signed release build passed signature verification. This was tested on
-base commit `37d1ac7` plus uncommitted changes. Local evidence is in `/tmp/conductor-tests-final.txt`,
-`/tmp/conductor-replay-final/`, and `/tmp/conductor-release-final.txt`; this turn's patch is
-`/tmp/conductor-2012-fixes.patch`. Replay outcomes still need interpretation against intended gestures.
+The performance and lifecycle update follows the application review and the request to implement
+its recommendations. Input and sampling changes are exercised with fake input sinks; no synthetic
+input is posted by these regression tests. `InputSchedulerTests` covers timer/watchdog independence
+while the camera queue is blocked, stale generations, ordered command completions, and timing.
+`RuntimeOwnershipTests` covers competing owners and bounded preview publication.
+`EngineLifecycleTests` drives the real Engine with a blocked camera queue and fake input. It checks
+early cancellation with held keys/drags, protection of a replacement owner, queued callbacks during
+restart, and sampling claimed before initialization finishes.
+`GestureLogTests`, `LogUploaderTests`, and `LogUploadHTTPTests` cover writer pressure, close/rename
+visibility, crash recovery, opt-out, response bounds, and cancellation through URLSession.
+`CameraCaptureTests` and `PixelAnalysisTests` check format selection, row strides and pixel ranges.
+The Worker tests include simultaneous conflicting and identical uploads, with one stored copy.
 
+Local verification on October 8, 2026, macOS arm64, Swift 6.4 and Node 22.23.2, base commit
+`d1ea7e1` plus `/tmp/conductor-performance-updates.patch`:
+
+- PASS: `swift test --force-resolved-versions`, 380 executed, two optional real-log tests skipped,
+  zero failures. Evidence: `/tmp/conductor-performance-tests.log`.
+- PASS: `swift build -c release --force-resolved-versions`. Evidence:
+  `/tmp/conductor-performance-release-build.log`.
+- PASS in `ingest/`: `npm ci`, `npm test`, seven tests, `npm run typecheck`, and
+  `npm audit --audit-level=high`, zero vulnerabilities.
+- PASS: actual bundled Worker with local workerd/R2, conflicting uploads return 201/409, identical
+  uploads return 201/200, and stored bytes match the winner. Local harness:
+  `cd ingest && node /tmp/conductor-r2-race-check.cjs`; evidence: `/tmp/conductor-r2-race-check.log`.
+- PASS: `git diff --check` and CI YAML parsing. The lockfile is included in the patch.
+- RESOLVED: fresh review found early sampling cancellation and queued callbacks during restart.
+  Reverting those fixes produced the expected forbidden input and missing held-key/drag behavior.
+  Evidence: `/tmp/conductor-engine-lifecycle-red.log`; restored focused checks passed in
+  `/tmp/conductor-runtime-lifecycle-green.log`. A separate reviewer rechecked both fixes and found
+  no further actionable issue.
+
+The evidence files are local temporary artifacts. The test commands and regression suites remain
+in the repository.
+
+Live camera accuracy, YUV/BGRA end-to-end timing, Accessibility input, and cursor feel remain
+unverified. The CI workflow has been checked locally but has not run on GitHub. No app installation
+or server deployment is part of this update.
 
 ```
 Sources/Conductor/
-  Engine.swift   Camera queue, Vision, clock, stall watchdog, calibration, gesture log, posting
-                 input, publishing to the UI
+  Engine.swift   Camera queue, Vision, calibration, log lifecycle, input submission, UI snapshots
+  SamplingOwnership.swift  Exclusive reach, look, and gesture-check ownership
   FramePipeline.swift  One frame after detection: recognizer, filter, pointers, scroll and zoom,
                  the input gate. Hands and a time in, cursor and input commands out
   Camera/        AVCaptureSession wrapper, camera choice, brightness/confidence checks
@@ -561,13 +635,14 @@ Sources/Conductor/
                  swipes, pointing), TriggerReading (one frame's start condition per trigger),
                  ControlBox, ScreenMapper, calibration, One Euro filter, pointer helpers,
                  ScrollPolicy, LookPicker, GestureCheck (per-hand gesture report)
-  Control/       CGEvent posting (incl. held modifier keys), Accessibility check, global hotkey
+  Control/       InputScheduler owns command order, glide ticks, and the stall watchdog;
+                 InputController posts CGEvents, Accessibility check, global hotkey
   Feedback/      Cursor ring overlay, hand map, sounds and VoiceOver announcements
   MenuBar/       Status item and menu
   Views/         Preview, toolbar-tab settings window, setup assistant, look calibration overlay,
                  gesture check window
   Model/         Settings (every knob and its default), Preferences (stores Settings in UserDefaults),
-                 presets and app profiles, TrackingState (UI)
+                 presets and app profiles, TrackingState (UI), LatestSnapshot (bounded preview updates)
 ingest/          The upload server: a Cloudflare Worker that files logs and reports in R2
 scripts/recordings.sql  DuckDB views over the bucket (frames, notes, reports)
 ```

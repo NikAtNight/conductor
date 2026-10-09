@@ -210,13 +210,15 @@ final class FramePipelineTests: XCTestCase {
 
     /// Two stacked displays and a model that puts the top one around pitch 2.5 and the bottom around
     /// 12.5. The face fixture's box is 0.4 tall, so the model's distance matches it.
-    private func makeLookPipeline() -> FramePipeline {
+    private func makeLookPipeline(scrollMode: Bool = false) -> FramePipeline {
         let yaw = LookModel.Spread(mean: 0, sd: 3)
         let model = LookModel(targets: [
             LookModel.Target(displayUUID: "top", pitch: LookModel.Spread(mean: 2.5, sd: 1.5), yaw: yaw),
             LookModel.Target(displayUUID: "bottom", pitch: LookModel.Spread(mean: 12.5, sd: 1.5), yaw: yaw),
         ], faceHeight: 0.4)
-        return makePipeline(displays: ["top": top, "bottom": bottom]) {
+        var map = GestureMap.standard
+        if scrollMode { map[.crossedFingers] = .scrollMode }
+        return makePipeline(map: map, displays: ["top": top, "bottom": bottom]) {
             $0.displayMode = .lookedAt
             $0.lookModel = model
         }
@@ -258,6 +260,21 @@ final class FramePipelineTests: XCTestCase {
         frame([PoseFixtures.openHand()], face: FaceFixtures.face(pitchDegrees: 12), count: 2)
         XCTAssertTrue(commands.contains(.leftUp(clickCount: 1)))
         XCTAssertEqual(pipeline.screen, bottom, "the dwell already passed, so the release lets it switch")
+    }
+
+    func testScrollModeKeepsLookTargetOnItsDisplay() {
+        pipeline = makeLookPipeline(scrollMode: true)
+        let atTop = FaceFixtures.face(pitchDegrees: 2)
+        let atBottom = FaceFixtures.face(pitchDegrees: 12)
+        frame([PoseFixtures.openHand()], face: atTop, count: 5)
+        frame([PoseFixtures.crossed()], face: atTop, count: 20)
+        frame([PoseFixtures.openHand()], face: atTop, count: 20)
+        XCTAssertEqual(last?.recognized.mode, .scrollMode)
+        frame([PoseFixtures.openHand()], face: atBottom, count: Int(LookPicker.dwell / dt) + 10)
+        XCTAssertEqual(pipeline.screen, top)
+        frame([PoseFixtures.crossed()], face: atBottom, count: 20)
+        frame([PoseFixtures.openHand()], face: atBottom, count: 5)
+        XCTAssertEqual(pipeline.screen, bottom)
     }
 
     func testInLookModeTheBoxStaysPutWhenTheDisplayChanges() {

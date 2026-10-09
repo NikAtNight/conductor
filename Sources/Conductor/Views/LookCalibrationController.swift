@@ -16,6 +16,8 @@ final class LookCalibrationController {
     private var windows: [NSWindow] = []
     private var engine: Engine?
     private var run: Task<Void, Never>?
+    private var runID: UUID?
+    private var samplingToken: UUID?
     private var completion: ((Result<LookModel.Pass, LookCalibration.Failure>?) -> Void)?
     private var samples: [LookCalibration.Sample] = []
     /// The display whose sample period is open. Nil while the eyes travel to a new dot.
@@ -33,21 +35,30 @@ final class LookCalibrationController {
             completion(nil)
             return
         }
+        let runID = UUID()
+        self.runID = runID
         self.completion = completion
         self.engine = engine
         samples = []
         sampling = nil
         run = Task { [weak self] in
             guard let self else { return }
-            let started = await engine.startLookSampling { [weak self] face in self?.record(face) }
-            guard started else {
-                finish(nil)
+            let token = await engine.startLookSampling(onCancelled: { [weak self] in
+                guard let self, self.runID == runID else { return }
+                self.cancel()
+            }) { [weak self] face in
+                guard let self, self.runID == runID else { return }
+                self.record(face)
+            }
+            guard let token else {
+                if self.runID == runID { finish(nil) }
                 return
             }
-            guard !Task.isCancelled else {
-                engine.stopSampling() // cancelled while the camera was starting
+            guard !Task.isCancelled, self.runID == runID else {
+                engine.stopSampling(token)
                 return
             }
+            samplingToken = token
             open(shown)
             do {
                 try await walk(shown.map(\.0))
@@ -93,10 +104,13 @@ final class LookCalibrationController {
     private func finish(_ result: Result<LookModel.Pass, LookCalibration.Failure>?) {
         guard let completion else { return }
         self.completion = nil
+        run?.cancel()
         run = nil
+        runID = nil
         sampling = nil
         engine?.logNote("look calibration result: \(Self.describe(result))")
-        engine?.stopSampling()
+        if let samplingToken { engine?.stopSampling(samplingToken) }
+        samplingToken = nil
         engine = nil
         for window in windows { window.close() }
         windows = []

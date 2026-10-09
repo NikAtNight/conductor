@@ -3,7 +3,7 @@ import Carbon.HIToolbox
 
 /// Posts synthetic input through CGEvent. All coordinates are global display points with a
 /// top-left origin, which is what CGEvent uses (and not what AppKit uses).
-final class InputController: @unchecked Sendable {
+final class InputController: InputSink, @unchecked Sendable {
     private var position: CGPoint
     private var leftDown = false
     /// Keys held by "Hold a key" bindings, so they can always be let go.
@@ -129,4 +129,27 @@ final class InputController: @unchecked Sendable {
 enum KeyCodes {
     static let equals = CGKeyCode(kVK_ANSI_Equal)
     static let minus = CGKeyCode(kVK_ANSI_Minus)
+}
+
+/// The scheduler's only input boundary. Tests use a recording sink and never create CGEvents.
+protocol InputSink: AnyObject {
+    var location: CGPoint { get }
+    func send(_ command: InputCommand)
+}
+
+extension InputController {
+    func send(_ command: InputCommand) {
+        switch command {
+        case .move(let point): move(to: point)
+        case .leftDown(let count): leftDown(clickCount: count)
+        case .leftUp(let count): leftUp(clickCount: count)
+        case .rightClick: rightClick()
+        case .middleClick: middleClick()
+        case .keyPress(let key, let flags): keyPress(key, flags: flags)
+        case .keyDown(let key): keyDown(key)
+        case .keyUp(let key): keyUp(key)
+        case .scroll(let dy, let flags): scroll(dy: dy, flags: flags)
+        case .releaseAll: releaseAll()
+        }
+    }
 }

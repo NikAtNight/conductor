@@ -128,4 +128,74 @@ final class LogUploaderTests: XCTestCase {
         XCTAssertLessThan(size, text.utf8.count / 20, "repetitive JSON should shrink a lot")
         XCTAssertEqual(try gunzip(Data(contentsOf: packed)), text)
     }
+
+    func testDisablingDuringFirstSendStopsBacklogAndInvalidatesQueuedSweeps() throws {
+        _ = try write("gesture-check-a.json", "{}")
+        _ = try write("gesture-check-b.json", "{}")
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var sends = 0
+        let uploader = LogUploader(config: .init(url: URL(string: "https://logs.example")!, token: "t"),
+                                   directory: dir, defaults: defaults) { _, _ in
+            lock.lock()
+            sends += 1
+            let first = sends == 1
+            lock.unlock()
+            if first { entered.signal(); release.wait() }
+            return .accepted
+        }
+        uploader.sweep()
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+        for _ in 0..<1000 { uploader.sweep() }
+        uploader.setEnabled(false)
+        uploader.sweep()
+        uploader.setEnabled(true)
+        release.signal()
+        uploader.queue.sync {}
+        XCTAssertEqual(sends, 1)
+        XCTAssertNil(defaults.stringArray(forKey: LogUploader.sentKey))
+        uploader.sweep()
+        uploader.queue.sync {}
+        XCTAssertEqual(sends, 3)
+        XCTAssertEqual(defaults.stringArray(forKey: LogUploader.sentKey), ["gesture-check-a.json", "gesture-check-b.json"])
+    }
+
+    func testSweepAndRetentionIgnoreWritingLogUntilFinalization() throws {
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let log = try GestureLog(directory: dir, beforeWrite: { entered.signal(); release.wait() })
+        log.note("record")
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+        var names: [String] = []
+        let uploader = LogUploader(config: .init(url: URL(string: "https://logs.example")!, token: "t"),
+                                   directory: dir, defaults: defaults) { request, _ in
+            names.append(request.url!.lastPathComponent)
+            return .accepted
+        }
+        log.finish { uploader.sweep() }
+        uploader.sweep()
+        uploader.queue.sync {}
+        XCTAssertEqual(names, [])
+        XCTAssertEqual(GestureLog.prune(directory: dir, keepBytes: 0, keepDays: 0), [])
+        release.signal()
+        log.finishAndWait()
+        // finishAndWait waits for the file, while callbacks can still be running. This explicit
+        // sweep also proves callers need no active-file exclusion after rotation.
+        uploader.sweep()
+        uploader.queue.sync {}
+        XCTAssertEqual(names, [log.url.lastPathComponent + ".gz"])
+        XCTAssertEqual(GestureLog.prune(directory: dir, keepBytes: 0), [log.url.lastPathComponent])
+    }
+
+    func testGzipCanCancelBetweenChunks() throws {
+        let source = try write("source.jsonl", String(repeating: "record\n", count: 500_000))
+        var checks = 0
+        XCTAssertThrowsError(try Gzip.compress(source, to: dir.appending(path: "cancelled.gz"), isCancelled: {
+            checks += 1
+            return checks == 2
+        })) { XCTAssertTrue($0 is CancellationError) }
+        XCTAssertEqual(checks, 2)
+    }
+
 }

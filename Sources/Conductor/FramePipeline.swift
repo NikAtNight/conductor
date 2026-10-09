@@ -311,7 +311,7 @@ struct FramePipeline {
     /// Look mode: moves the target to the display the head points at. A switch mid-drag would carry
     /// the held button across screens, so the picker waits while a trigger is held.
     private mutating func followLook(_ face: FacePose?, at time: TimeInterval) {
-        let locked = [.drag, .scroll, .zoom].contains(recognizer.mode) || recognizer.isHoldingTrigger
+        let locked = [.drag, .scroll, .scrollMode, .zoom].contains(recognizer.mode) || recognizer.isHoldingTrigger
         guard let uuid = lookPicker?.update(face, at: time, locked: locked),
               let next = lookDisplays[uuid], next != screen else { return }
         moveTarget(to: next)

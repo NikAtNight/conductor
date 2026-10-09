@@ -4,10 +4,10 @@ import Foundation
 
 /// Record of every camera frame while tracking runs: what the tracker saw, the measurements the
 /// recognizer decides with, and what it did. For tuning thresholds against real hands. One JSON
-/// object per line, landmarks and numbers only, never camera images. Used from the camera queue
-/// only. Engine opens one per session and splits long sessions hourly; `prune` keeps the folder
+/// object per line, landmarks and numbers only, never camera images. A bounded worker encodes
+/// and writes away from the camera queue. Engine opens one per session; `prune` keeps the folder
 /// from growing without end.
-final class GestureLog {
+final class GestureLog: @unchecked Sendable {
     struct Hand: Encodable {
         var chirality: String
         /// Vision space (origin bottom-left, un-mirrored). Joints Vision didn't find are left out.
@@ -186,11 +186,6 @@ final class GestureLog {
         }
     }
 
-    private struct SetupLine: Encodable {
-        var time: Double
-        var setup: Setup
-    }
-
     /// Something that happened between frames.
     struct Note: Encodable {
         var time: Double
@@ -201,31 +196,52 @@ final class GestureLog {
         FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/Conductor")
     }
 
+    /// The completed name. It becomes readable here only after finalization.
     let url: URL
+    let inProgressURL: URL
     let started: Date
-    private let handle: FileHandle
-    private let encoder = JSONEncoder()
+    private let writer: GestureLogWriter
+    typealias Diagnostics = GestureLogWriter.Diagnostics
+    var diagnostics: Diagnostics { writer.diagnostics }
 
-    /// Starts a new file named for `date`.
-    init(directory: URL = GestureLog.directory, date: Date = Date()) throws {
+    /// Starts a non-uploadable file. The bounded worker owns its file handle.
+    init(directory: URL = GestureLog.directory, date: Date = Date(), bufferCapacity: Int = 256,
+         beforeWrite: (() throws -> Void)? = nil) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
-        let stamp = formatter.string(from: date)
-        var candidate = directory.appending(path: "gestures-\(stamp).jsonl")
-        var n = 2
-        while FileManager.default.fileExists(atPath: candidate.path) {
-            candidate = directory.appending(path: "gestures-\(stamp)-\(n).jsonl")
-            n += 1
+        let created = try GestureLogWriter.withLifecycleLock(directory: directory) {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+            let stamp = formatter.string(from: date)
+            var candidate = directory.appending(path: "gestures-\(stamp).jsonl")
+            var n = 2
+            while FileManager.default.fileExists(atPath: candidate.path)
+                    || FileManager.default.fileExists(atPath: candidate.path + ".inprogress") {
+                candidate = directory.appending(path: "gestures-\(stamp)-\(n).jsonl")
+                n += 1
+            }
+            let active = URL(fileURLWithPath: candidate.path + ".inprogress")
+            let writer = try GestureLogWriter(activeURL: active, finalURL: candidate, capacity: bufferCapacity,
+                                              beforeWrite: beforeWrite)
+            return (candidate, active, writer)
         }
-        url = candidate
+        url = created.0
+        inProgressURL = created.1
+        writer = created.2
         started = date
-        FileManager.default.createFile(atPath: url.path, contents: nil)
-        handle = try FileHandle(forWritingTo: url)
     }
 
-    deinit {
-        try? handle.close()
+    deinit { writer.finish(completion: {}) }
+
+    /// Rejects new records immediately, then drains, closes, and atomically publishes the file.
+    func finish(completion: @escaping @Sendable () -> Void = {}) { writer.finish(completion: completion) }
+
+    /// Shutdown path only. Normal rotation uses finish so the camera queue keeps moving.
+    func finishAndWait() { writer.finishAndWait() }
+
+    /// Call once before opening new logs. Locked writers in other app processes are skipped.
+    @discardableResult
+    static func recoverInterruptedLogs(directory: URL = GestureLog.directory) -> [URL] {
+        GestureLogWriter.recover(directory: directory)
     }
 
     /// Keeps the folder bounded now that every session is logged: logs and reports older than
@@ -257,28 +273,22 @@ final class GestureLog {
                output: GestureRecognizer.Output, cursor: CGPoint?,
                sinceLastMs: Double?, detectMs: Double, faceMs: Double? = nil, processMs: Double,
                warning: String? = nil, idle: Bool = false) {
-        append(Frame(
+        writer.append(.frame(Frame(
             time: time.timeIntervalSince1970, fps: fps, mode: output.mode.rawValue, label: output.label,
             actions: output.actions.map { String(describing: $0) },
             hands: hands.map(Self.hand), primary: primary.map(Self.measures), face: face.map(Self.face),
             cursor: cursor.map { [Self.round($0.x, places: 1), Self.round($0.y, places: 1)] },
             sinceLastMs: sinceLastMs.map { Self.round($0, places: 1) },
             detectMs: Self.round(detectMs, places: 1), faceMs: faceMs.map { Self.round($0, places: 1) },
-            processMs: Self.round(processMs, places: 1), warning: warning, idle: idle ? true : nil))
+            processMs: Self.round(processMs, places: 1), warning: warning, idle: idle ? true : nil)))
     }
 
     func setup(_ setup: Setup) {
-        append(SetupLine(time: Date().timeIntervalSince1970, setup: setup))
+        writer.append(.setup(setup, Date().timeIntervalSince1970))
     }
 
     func note(_ event: String) {
-        append(Note(time: Date().timeIntervalSince1970, event: event))
-    }
-
-    private func append<T: Encodable>(_ line: T) {
-        guard var data = try? encoder.encode(line) else { return }
-        data.append(0x0A)
-        try? handle.write(contentsOf: data)
+        writer.append(.note(Note(time: Date().timeIntervalSince1970, event: event)))
     }
 
     private static func hand(_ pose: HandPose) -> Hand {

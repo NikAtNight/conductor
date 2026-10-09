@@ -12,6 +12,7 @@ final class GestureLogTests: XCTestCase {
             log.write(time: Date(), fps: 30, hands: [hand], primary: hand, output: output, cursor: CGPoint(x: 100, y: 200),
                       sinceLastMs: 33, detectMs: 5, processMs: 7)
         }
+        log.finishAndWait()
         let lines = try String(contentsOf: log.url, encoding: .utf8).split(separator: "\n")
         XCTAssertEqual(lines.count, 2)
         let second = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(lines[1].utf8)) as? [String: Any])
@@ -51,6 +52,7 @@ final class GestureLogTests: XCTestCase {
         log.write(time: Date(), fps: 5, hands: [], primary: nil, output: output, cursor: nil, sinceLastMs: 200,
                   detectMs: 5, processMs: 7, warning: "Too dark to track well. Add light in front of you.", idle: true)
 
+        log.finishAndWait()
         let lines = try String(contentsOf: log.url, encoding: .utf8).split(separator: "\n")
         XCTAssertEqual(lines.count, 2)
         let first = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(lines[0].utf8)) as? [String: Any])
@@ -124,6 +126,7 @@ final class GestureLogTests: XCTestCase {
         let output = r.update(hands: [], at: 0)
         log.write(time: Date(), fps: 30, hands: [], primary: nil, face: FaceFixtures.face(pitchDegrees: 22.5),
                   output: output, cursor: nil, sinceLastMs: 33, detectMs: 5, faceMs: 4, processMs: 11)
+        log.finishAndWait()
         let line = try XCTUnwrap(String(contentsOf: log.url, encoding: .utf8).split(separator: "\n").first)
         let frame = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
         XCTAssertEqual(frame["faceMs"] as? Double, 4)
@@ -138,4 +141,108 @@ final class GestureLogTests: XCTestCase {
         XCTAssertNil(right["gaze"])
         XCTAssertEqual(right["openness"] as? Double, 0.4)
     }
+
+    func testBlockedWriterBoundsBacklogAndFinishPublishesOnlyAfterDrain() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "GestureLogTests.\(UUID())")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let log = try GestureLog(directory: dir, bufferCapacity: 2, beforeWrite: {
+            entered.signal()
+            release.wait()
+        })
+        log.note("first")
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+        log.note("second")
+        log.note("third")
+        for _ in 0..<1000 { log.note("dropped") }
+        XCTAssertEqual(log.diagnostics.pendingLines, 2)
+        XCTAssertEqual(log.diagnostics.highWaterMark, 2)
+        XCTAssertEqual(log.diagnostics.droppedLines, 1000)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: log.url.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: log.inProgressURL.path))
+        XCTAssertNil(LogUploader.Kind(fileName: log.inProgressURL.lastPathComponent))
+        XCTAssertEqual(GestureLog.prune(directory: dir, keepBytes: 0, keepDays: 0), [])
+        let finished = expectation(description: "finalized")
+        log.finish {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: log.url.path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: log.inProgressURL.path))
+            finished.fulfill()
+        }
+        // Finish returns while the writer remains blocked, and later records cannot enter it.
+        log.note("after finish")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: log.url.path))
+        for _ in 0..<3 { release.signal() }
+        wait(for: [finished], timeout: 2)
+        log.finishAndWait()
+        let events = try String(contentsOf: log.url, encoding: .utf8).split(separator: "\n").map {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])["event"] as? String
+        }
+        XCTAssertEqual(events, ["first", "second", "third"])
+        XCTAssertEqual(log.diagnostics.writtenLines, 3)
+        XCTAssertEqual(log.diagnostics.failedLines, 0)
+        XCTAssertNil(log.diagnostics.finalizationError)
+        XCTAssertGreaterThan(log.diagnostics.maxEncodeMs, 0)
+        XCTAssertGreaterThan(log.diagnostics.maxWriteMs, 0)
+    }
+
+    func testRecoveryTrimsCrashTailAndSkipsLiveWritersAndUnrelatedFiles() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "GestureLogTests.\(UUID())")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = try GestureLog(directory: dir)
+        log.note("still live")
+        let crashed = dir.appending(path: "gestures-crashed.jsonl.inprogress")
+        let complete = "{\"time\":1,\"fps\":30,\"mode\":\"idle\",\"label\":\"No hand\",\"actions\":[],\"hands\":[],\"detectMs\":4,\"processMs\":5}\n"
+        try (complete + "{\"time\":2").write(to: crashed, atomically: true, encoding: .utf8)
+        let unrelated = dir.appending(path: "notes.inprogress")
+        try "leave this alone".write(to: unrelated, atomically: true, encoding: .utf8)
+        let recovered = GestureLog.recoverInterruptedLogs(directory: dir)
+        XCTAssertEqual(recovered.map(\.lastPathComponent), ["gestures-crashed.jsonl"])
+        XCTAssertEqual(try String(contentsOf: XCTUnwrap(recovered.first), encoding: .utf8), complete)
+        XCTAssertEqual(try GestureLogReplay.frames(in: XCTUnwrap(recovered.first)).count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: log.inProgressURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: log.url.path))
+        XCTAssertEqual(try String(contentsOf: unrelated, encoding: .utf8), "leave this alone")
+        XCTAssertEqual(GestureLog.recoverInterruptedLogs(directory: dir), [])
+        log.finishAndWait()
+    }
+
+    func testRecoveryKeepsConflictingCompletedAndInterruptedFiles() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "GestureLogTests.\(UUID())")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let completed = dir.appending(path: "gestures-conflict.jsonl")
+        let interrupted = dir.appending(path: "gestures-conflict.jsonl.inprogress")
+        try "completed\n".write(to: completed, atomically: true, encoding: .utf8)
+        try "interrupted tail".write(to: interrupted, atomically: true, encoding: .utf8)
+        XCTAssertEqual(GestureLog.recoverInterruptedLogs(directory: dir), [])
+        XCTAssertEqual(try String(contentsOf: completed, encoding: .utf8), "completed\n")
+        XCTAssertEqual(try String(contentsOf: interrupted, encoding: .utf8), "interrupted tail")
+    }
+
+
+    func testWriteFailureKeepsTheFileInterruptedAndReportsLostRecords() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "GestureLogTests.\(UUID())")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let log = try GestureLog(directory: dir, beforeWrite: {
+            entered.signal()
+            release.wait()
+            throw CocoaError(.fileWriteOutOfSpace)
+        })
+        log.note("failed write")
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+        log.note("queued record lost")
+        log.finish()
+        release.signal()
+        log.finishAndWait()
+        XCTAssertEqual(log.diagnostics.failedLines, 1)
+        XCTAssertEqual(log.diagnostics.droppedLines, 1)
+        XCTAssertNotNil(log.diagnostics.finalizationError)
+        XCTAssertEqual(log.diagnostics.pendingLines, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: log.url.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: log.inProgressURL.path))
+    }
+
 }

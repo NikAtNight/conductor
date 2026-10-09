@@ -3,10 +3,10 @@ import Foundation
 
 /// Carries the cursor from where it is to each new target over the time until the next target is
 /// due, so a 30 fps camera doesn't show as 30 jumps a second. A trackpad reports over a hundred
-/// times a second; the camera can't, but the cursor can still move that often. Pure: the Engine
-/// feeds it targets as the pipeline posts them and asks for the position from a timer.
+/// times a second; the camera can't, but the cursor can still move that often. InputScheduler
+/// feeds it targets from the pipeline and asks for the position from its timer.
 struct CursorGlide {
-    /// Positions per second the Engine asks for.
+    /// Positions per second the input scheduler asks for.
     static let rate: Double = 120
     /// How long a glide takes when there's no previous target to measure the frame gap from.
     static let defaultFrame: TimeInterval = 1.0 / 30
@@ -50,5 +50,6 @@ struct CursorGlide {
     /// Forgets the target. The cursor stays where it is.
     mutating func stop() {
         to = nil
+        lastTargetTime = nil
     }
 }

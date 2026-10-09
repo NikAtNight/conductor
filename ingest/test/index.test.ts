@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import worker, { MAX_BYTES, type Env } from "../src/index";
+import worker, { type Env } from "../src/index";
+
+// The documented upload limit is part of the server contract.
+const MAX_BYTES = 100 * 1024 * 1024;
 
 async function sha256(text: string): Promise<string> {
   const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
@@ -9,6 +12,7 @@ async function sha256(text: string): Promise<string> {
 /** Enough of R2 to test against: keeps bodies, checks the checksum like R2 does. */
 class FakeBucket {
   objects = new Map<string, { body: string; options: R2PutOptions | undefined }>();
+  writes = 0;
   async head(key: string) {
     const stored = this.objects.get(key);
     if (!stored) return null;
@@ -18,8 +22,29 @@ class FakeBucket {
   async put(key: string, body: ReadableStream | null, options?: R2PutOptions) {
     const text = await new Response(body).text();
     if (options?.sha256 && options.sha256 !== (await sha256(text))) throw new Error("The SHA-256 checksum you specified did not match what we received.");
+    const condition = options?.onlyIf;
+    const createOnly = condition instanceof Headers
+      ? condition.get("If-None-Match") === "*"
+      : condition?.etagDoesNotMatch === "*";
+    if (createOnly && this.objects.has(key)) return null;
     this.objects.set(key, { body: text, options });
+    this.writes += 1;
     return { key } as R2Object;
+  }
+}
+
+/** Both requests see the object missing before either gets to store its body. */
+class ConcurrentBucket extends FakeBucket {
+  private heads = 0;
+  private release!: () => void;
+  private ready = new Promise<void>((resolve) => { this.release = resolve; });
+
+  override async head(key: string) {
+    const existing = await super.head(key);
+    this.heads += 1;
+    if (this.heads === 2) this.release();
+    if (this.heads <= 2) await this.ready;
+    return existing;
   }
 }
 
@@ -27,8 +52,8 @@ const INSTALL = "0f3a6c5e-1b2d-4e7f-8a9b-0c1d2e3f4a5b";
 const allow = { limit: async () => ({ success: true }) };
 const deny = { limit: async () => ({ success: false }) };
 
-function env(limits: Partial<Pick<Env, "PER_INSTALL" | "PER_ADDRESS">> = {}): Env & { RECORDINGS: FakeBucket } {
-  return { RECORDINGS: new FakeBucket(), UPLOAD_TOKEN: "secret", PER_INSTALL: allow, PER_ADDRESS: allow, ...limits } as never;
+function env(limits: Partial<Pick<Env, "PER_INSTALL" | "PER_ADDRESS">> = {}, bucket = new FakeBucket()): Env & { RECORDINGS: FakeBucket } {
+  return { RECORDINGS: bucket, UPLOAD_TOKEN: "secret", PER_INSTALL: allow, PER_ADDRESS: allow, ...limits } as never;
 }
 
 async function put(path: string, body = "{}", headers: Record<string, string> = {}, method = "PUT"): Promise<Request> {
@@ -73,6 +98,27 @@ describe("the upload server", () => {
     expect((await worker.fetch(await put("/reports/gesture-check-2026-10-06-121500.json", '{"date":1}'), e)).status).toBe(200);
     expect((await worker.fetch(await put("/reports/gesture-check-2026-10-06-121500.json", '{"date":2}'), e)).status).toBe(409);
     expect(e.RECORDINGS.objects.get(`reports/${INSTALL}/gesture-check-2026-10-06-121500.json`)?.body).toBe('{"date":1}');
+  });
+
+  it("keeps the first file when different first uploads race for the same name", async () => {
+    const e = env({}, new ConcurrentBucket());
+    const path = "/reports/gesture-check-2026-10-06-121500.json";
+    const requests = await Promise.all([put(path, '{"date":1}'), put(path, '{"date":2}')]);
+    const responses = await Promise.all(requests.map((request) => worker.fetch(request, e)));
+    expect(responses.map((response) => response.status).sort()).toEqual([201, 409]);
+    expect(e.RECORDINGS.writes).toBe(1);
+    const key = `reports/${INSTALL}/gesture-check-2026-10-06-121500.json`;
+    const winner = responses.findIndex((response) => response.status === 201);
+    expect(e.RECORDINGS.objects.get(key)?.body).toBe(`{"date":${winner + 1}}`);
+  });
+
+  it("accepts a concurrent retry of identical bytes without rewriting the object", async () => {
+    const e = env({}, new ConcurrentBucket());
+    const path = "/reports/gesture-check-2026-10-06-121500.json";
+    const requests = await Promise.all([put(path, '{"date":1}'), put(path, '{"date":1}')]);
+    const responses = await Promise.all(requests.map((request) => worker.fetch(request, e)));
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 201]);
+    expect(e.RECORDINGS.writes).toBe(1);
   });
 
   it("refuses a body that doesn't match its checksum", async () => {
