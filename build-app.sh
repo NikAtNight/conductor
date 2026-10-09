@@ -70,7 +70,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 Nikhil Kapadia.</string>
     <key>SUFeedURL</key>
-    <string>https://github.com/NikAtNight/conductor/releases/latest/download/appcast.xml</string>
+    <string>https://github.com/dev-talix/conductor/releases/latest/download/appcast.xml</string>
     <key>SUPublicEDKey</key>
     <string>4/wQ6XehB3rZhDeckFB1O5atGbo7TkxxYcDsC175bos=</string>
     <key>SUEnableAutomaticChecks</key>

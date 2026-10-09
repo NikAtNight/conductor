@@ -59,8 +59,8 @@ rm -rf "$APPCAST_DIR"
 mkdir -p "$APPCAST_DIR"
 cp "$ZIP" "$APPCAST_DIR/"
 "$GENERATE_APPCAST" \
-  --download-url-prefix "https://github.com/NikAtNight/conductor/releases/download/v$VERSION/" \
-  --link "https://github.com/NikAtNight/conductor" \
+  --download-url-prefix "https://github.com/dev-talix/conductor/releases/download/v$VERSION/" \
+  --link "https://github.com/dev-talix/conductor" \
   "$APPCAST_DIR"
 cp "$APPCAST_DIR/appcast.xml" "$DIST/appcast.xml"
 rm -rf "$APPCAST_DIR"
