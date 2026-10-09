@@ -1,5 +1,5 @@
 -- Views over the recordings bucket for DuckDB: one row per camera frame, per note, and per
--- gesture in a gesture check. See "Querying the recordings" in the README.
+-- gesture in a gesture check. See "Querying the recordings" in docs/development.md.
 --
 --   duckdb -init scripts/recordings.sql
 --
